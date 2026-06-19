@@ -1,0 +1,330 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGO_URI")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  DIRIGENTE
+  LIDER_CHAPA
+  CANDIDATO
+}
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  name          String?
+  email         String    @unique
+  password      String?
+  role          Role      @default(CANDIDATO)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relações Hierárquicas (Privilégio Multi apenas para Lideranças via WhatsappLideranca)
+  partyId       String?   @db.ObjectId
+  party         Party?    @relation(fields: [partyId], references: [id])
+  
+  slateId       String?   @db.ObjectId
+  slate         Slate?    @relation(fields: [slateId], references: [id])
+  
+  candidateProfile CandidateProfile?
+  
+  whatsappLiderancas WhatsappLideranca[]
+}
+
+model Party {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  code      String   @unique
+  image     String?
+  users     User[]
+  slates    Slate[]
+}
+
+model Slate {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  partyId   String   @db.ObjectId
+  party     Party    @relation(fields: [partyId], references: [id])
+  users     User[]
+}
+
+model CandidateProfile {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @unique @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  bio            String?
+  notes          String?
+  politiScore    Int             @default(0)
+  
+  // Social Metrics
+  instagramFollowers Int?   @default(0)
+  instagramMentions  Int?   @default(0)
+  instagramComments  Int?   @default(0)
+  
+  facebookFollowers  Int?   @default(0)
+  facebookMentions   Int?   @default(0)
+  facebookComments   Int?   @default(0)
+  
+  tiktokFollowers    Int?   @default(0)
+  tiktokMentions     Int?   @default(0)
+  tiktokComments     Int?   @default(0)
+  
+  whatsappMessages   Int?   @default(0)
+  
+  // Vincula este candidato a uma instância da Evolution API (WhatsApp)
+  evolutionInstanceName String?
+  
+  lastMetricUpdate   DateTime?
+  
+  socialProfiles      SocialProfile[]
+  userInteractions    UserInteraction[] // Added for Deep Analytics
+  
+  whatsappLiderancaIds String[] @db.ObjectId
+  whatsappLiderancas   WhatsappLideranca[] @relation(fields: [whatsappLiderancaIds], references: [id])
+  whatsappGroups       WhatsappGroup[]
+}
+enum SocialPlatform {
+  INSTAGRAM
+  FACEBOOK
+  WHATSAPP
+  TIKTOK
+  TWITTER
+  LINKEDIN
+  YOUTUBE
+}
+
+model SocialProfile {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId String   @db.ObjectId
+  candidate   CandidateProfile @relation(fields: [candidateId], references: [id])
+  
+  platform    SocialPlatform
+  handle      String
+  url         String?
+  
+  // Standardized Metrics (Manual or API)
+  followers   Int      @default(0)
+  following   Int      @default(0)
+  postsCount  Int      @default(0)
+  avgLikes    Float    @default(0.0)
+  engagement  Float    @default(0.0)
+  
+  // Mechanical Turk / Manual Data Flag
+  isManual    Boolean  @default(false)
+  
+  // Flexible storage for API specific data
+  rawApiData  Json?
+
+  // Meta (Facebook/Instagram) specific fields
+  accessToken         String?
+  tokenExpiresAt      DateTime?
+  instagramBusinessId String?
+  
+  lastUpdate          DateTime @default(now())
+
+  // Relations for Deep Analytics
+  mediaPosts          MediaPost[]
+}
+
+// ----------------------------------------------------------------------------
+// FASE 1: DEEP ANALYTICS MODELS (Instagram Engagement)
+// ----------------------------------------------------------------------------
+
+model MediaPost {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  socialProfileId String   @db.ObjectId
+  socialProfile   SocialProfile @relation(fields: [socialProfileId], references: [id], onDelete: Cascade)
+  
+  // Facebook/Instagram API IDs
+  metaMediaId     String   @unique // The exact ID returned by Graph API
+  
+  // Post Details
+  caption         String?
+  mediaType       String?  // 'IMAGE', 'VIDEO', 'CAROUSEL_ALBUM'
+  mediaUrl        String?
+  permalink       String?
+  
+  // Metrics at the time of sync
+  likesCount      Int      @default(0)
+  commentsCount   Int      @default(0)
+  reach           Int?
+  impressions     Int?
+  saved           Int?
+  shares          Int?
+  
+  postedAt        DateTime
+  lastSyncedAt    DateTime @default(now())
+  
+  // Relations
+  comments        Comment[]
+}
+
+model Comment {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  mediaPostId     String   @db.ObjectId
+  mediaPost       MediaPost @relation(fields: [mediaPostId], references: [id], onDelete: Cascade)
+  
+  // Graph API Data
+  metaCommentId   String   @unique
+  text            String
+  likeCount       Int      @default(0)
+  
+  // The person who wrote the comment
+  authorUsername  String
+  authorMetaId    String?  // Sometimes Graph API provides ID, sometimes just username
+  
+  // Useful flags for algorithms
+  isFromCandidate Boolean  @default(false) // Did the politician reply?
+  isHidden        Boolean  @default(false)
+  
+  createdAt       DateTime
+}
+
+// Aggregation model to quickly identify "Super Fans" / Lideranças without grouping millions of comments
+model UserInteraction {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Who is interacting?
+  username        String
+  metaUserId      String?
+  
+  // Which candidate are they interacting with?
+  candidateId     String   @db.ObjectId
+  candidate       CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  // Aggregated score/counters
+  interactionScore Int     @default(1) // +1 for comment, +2 for long comment, etc
+  sentiment       Float?   // Future: AI sentiment score (-1 to 1)
+  
+  lastInteractedAt DateTime @default(now())
+
+  @@unique([username, candidateId]) // Ensure we aggregate interactions per user per candidate
+}
+
+// ----------------------------------------------------------------------------
+// FASE 3: WHATSAPP HIERARCHICAL METRICS (Candidato > Liderança > Grupo)
+// ----------------------------------------------------------------------------
+
+model WhatsappLideranca {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  name             String
+  candidateIds     String[] @db.ObjectId
+  candidates       CandidateProfile[] @relation(fields: [candidateIds], references: [id])
+  
+  // Opcional: Vincular a um User do sistema (Role: LIDER_CHAPA)
+  userId           String?  @db.ObjectId
+  user             User?    @relation(fields: [userId], references: [id])
+
+  // Relações Adicionais (Multi-Associação)
+  partyIds         String[] @db.ObjectId
+  slateIds         String[] @db.ObjectId
+
+  // Contatos & Redes
+  whatsappHandle   String?
+  instagramHandle  String?
+  phone            String?
+  email            String?
+  profileImageUrl  String?
+
+  // Geolocalização & Demografia
+  region           String?
+  neighborhood     String?
+  segment          String?
+  profession       String?
+
+  // Métricas Qualitativas
+  influenceLevel   Int?
+  status           String?  @default("ATIVO") // ATIVO, INATIVO, PROSPECCAO
+
+  // Aggregated Metrics (Calculado a partir de grupos)
+  entryCount       Int      @default(0)
+  exitCount        Int      @default(0)
+  currentMembers   Int      @default(0)
+  duplicateMembers Int      @default(0)
+  
+  // Future metrics
+  pollsCount       Int      @default(0)
+  reactionsCount   Int      @default(0)
+  repliesCount     Int      @default(0)
+  messagesCount    Int      @default(0)
+
+  isManual         Boolean  @default(false)
+  lastUpdate       DateTime @default(now())
+
+  groups           WhatsappGroup[]
+}
+
+model WhatsappGroup {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  name             String
+  liderancaId      String   @db.ObjectId
+  lideranca        WhatsappLideranca @relation(fields: [liderancaId], references: [id], onDelete: Cascade)
+
+  // Direct link to candidate for faster queries
+  candidateId      String   @db.ObjectId
+  candidate        CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  // Metadados do Grupo Genérico
+  inviteLink       String?
+  groupLeaderName  String?
+  groupLeaderPhone String?
+  groupType        String?  @default("ABERTO") // ABERTO, FECHADO
+  category         String?
+  locationRegion   String?
+  description      String?
+
+  // Raw metrics
+  entryCount       Int      @default(0)
+  exitCount        Int      @default(0)
+  currentMembers   Int      @default(0)
+  duplicateMembers Int      @default(0)
+
+  // Future metrics
+  pollsCount       Int      @default(0)
+  reactionsCount   Int      @default(0)
+  repliesCount     Int      @default(0)
+  messagesCount    Int      @default(0)
+
+  // Link for evolution api/etc
+  groupId          String?  
+  
+  isManual         Boolean  @default(false)
+  lastUpdate       DateTime @default(now())
+
+  members          WhatsappGroupMember[]
+  
+  @@index([candidateId])
+  @@index([liderancaId])
+}
+
+model WhatsappGroupMember {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  groupId          String   @db.ObjectId
+  group            WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  name             String?
+  phone            String?
+  instagramHandle  String?
+  facebookHandle   String?
+
+  // Votos em enquete (edição manual apenas SUPER_ADMIN)
+  pollVotes        Int      @default(0)
+
+  // Cruzamento com dados de IG (por @instagram)
+  igMatched        Boolean  @default(false)
+  igUsername       String?
+  igInteractionScore Int?
+
+  isManual         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([groupId])
+  @@index([instagramHandle])
+}
