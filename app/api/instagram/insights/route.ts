@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/app/lib/prisma';
-import { metaService } from '@/services/metaService';
 import { SocialPlatform } from '@prisma/client';
+import {
+    resolveInstagramAnalyticsContext,
+    getSuperFansForProfile,
+} from '@/lib/instagram-analytics-context';
 
 export async function GET(request: Request) {
     try {
@@ -11,71 +14,19 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        // @ts-ignore
-        const callerRole = session?.user?.role;
         const { searchParams } = new URL(request.url);
-        const viewAsUserId = searchParams.get('viewAs');
+        const ctx = await resolveInstagramAnalyticsContext(session.user, {
+            viewAsUserId: searchParams.get('viewAs'),
+            socialProfileId: searchParams.get('socialProfileId'),
+            igHandle: searchParams.get('igHandle'),
+        });
 
-        // Admin/SuperAdmin pode buscar dados de qualquer usuário via viewAs
-        let targetId = viewAsUserId;
-        if ((callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !viewAsUserId) {
-             const firstCandidate = await prisma.user.findFirst({ 
-                 where: { 
-                     role: 'CANDIDATO',
-                     candidateProfile: {
-                         socialProfiles: {
-                             some: { platform: 'INSTAGRAM' }
-                         }
-                     }
-                 },
-                 orderBy: { createdAt: 'desc' }
-             });
-             if (firstCandidate) {
-                  targetId = firstCandidate.id;
-             }
-        }
-        const isAdminViewing = (callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !!targetId;
-
-        // 1. Get User's Social Profile for Instagram
-        // Se admin está visualizando outro perfil, busca por userId. Senão, busca pelo e-mail do admin.
-        const user = isAdminViewing
-            ? await prisma.user.findUnique({
-                where: { id: targetId! },
-                include: {
-                    candidateProfile: {
-                        include: {
-                            socialProfiles: {
-                                where: { platform: SocialPlatform.INSTAGRAM }
-                            }
-                        }
-                    }
-                },
-            })
-            : await prisma.user.findUnique({
-                where: { email: session.user.email },
-                include: {
-                    candidateProfile: {
-                        include: {
-                            socialProfiles: {
-                                where: { platform: SocialPlatform.INSTAGRAM }
-                            }
-                        }
-                    }
-                },
-            });
-
-        if (!user || !user.candidateProfile) {
+        if (!ctx) {
             return NextResponse.json({ error: 'Perfil de candidato não encontrado.' }, { status: 404 });
         }
 
-        const instagramProfile = user.candidateProfile.socialProfiles[0];
+        const { user, socialProfile: instagramProfile } = ctx;
 
-        if (!instagramProfile) {
-            return NextResponse.json({ error: 'Link do Instagram não encontrado ou expirado. Conecte novamente.' }, { status: 404 });
-        }
-
-        // Require Token/BusinessId ONLY IF it's not a manual profile and we don't want to sync via scraper.
-        // Since we are migrating to Scraper/Apify, any profile that has a `handle` should be supported!
         if (!instagramProfile.handle) {
             return NextResponse.json({ error: 'Handle do Instagram não encontrado.' }, { status: 404 });
         }
@@ -95,7 +46,7 @@ export async function GET(request: Request) {
         const followers = instagramProfile.followers || profileData?.followers_count || 0;
         const following = instagramProfile.following || profileData?.follows_count || 0;
 
-        const biography = profileData?.biography || user.candidateProfile.bio || '';
+        const biography = profileData?.biography || '';
         const profilePictureUrl = profileData?.profile_picture_url || '';
 
         // Extract Insights
@@ -153,13 +104,10 @@ export async function GET(request: Request) {
             calculatedEngagementRate = (avgInteractionsPerPost / followers) * 100;
         }
 
-        // 5. Lideranças / SuperFans do Banco Real (alimentados via /api/instagram/sync)
-        const topInteractors = await prisma.userInteraction.findMany({
-            where: { candidateId: user.candidateProfile.id },
-            orderBy: { interactionScore: 'desc' },
-            take: 10,
-            select: { username: true, interactionScore: true, lastInteractedAt: true }
-        });
+        const topInteractors = await getSuperFansForProfile(
+            instagramProfile.id,
+            instagramProfile.handle
+        );
 
         // Se não tivermos posts no DB, significa que needsSync é true.
         const needsSync = dbPosts.length === 0;
@@ -191,7 +139,9 @@ export async function GET(request: Request) {
                 gender_age: audienceData?.data?.find((m: any) => m.name === 'audience_gender_age')?.values[0]?.value || {},
             },
             history: [],
-            superFans: topInteractors
+            superFans: topInteractors,
+            socialProfileId: instagramProfile.id,
+            selectedHandle: instagramProfile.handle,
         }, { status: 200 });
 
     } catch (error: any) {

@@ -15,8 +15,6 @@ import {
     UserSearch,
     UserCog,
     User,
-    Instagram,
-    Facebook
 } from 'lucide-react';
 import { cn } from '@/app/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -37,8 +35,6 @@ export function Shell({ children, userRole, className }: ShellProps) {
     const navigation = [
         { name: 'Dashboard', href: '/', icon: LayoutDashboard, roles: ['ALL'] },
         { name: 'Deep Analytics (IG)', href: '/instagram-analytics', icon: TrendingUp, roles: ['ALL'] },
-        { name: 'Explorador de Instagram', href: '/instagram-explorer', icon: Instagram, roles: ['SUPER_ADMIN'] },
-        { name: 'Explorador de Facebook', href: '/facebook-explorer', icon: Facebook, roles: ['SUPER_ADMIN'] },
         { name: 'Seleção de Candidatos', href: '/candidates', icon: UserSearch, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRIGENTE', 'LIDER_CHAPA'] },
         { name: 'Tabela de Usuários', href: '/users', icon: UserCog, roles: ['SUPER_ADMIN', 'ADMIN'] },
         { name: 'Configurações', href: '/settings', icon: Settings, roles: ['ALL'] },

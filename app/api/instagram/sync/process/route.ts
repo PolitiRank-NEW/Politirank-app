@@ -2,8 +2,16 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/app/lib/prisma';
 import { apifyService } from '@/services/apifyService';
-import { SocialPlatform } from '@prisma/client';
+import { SocialPlatform, Prisma } from '@prisma/client';
 import { analyzeSentiment, getSentimentWeight } from '@/services/sentimentUtils';
+import {
+    APIFY_IG_POSTS_FOR_COMMENTS,
+    APIFY_IG_COMMENTS_PER_POST,
+} from '@/lib/apify-limits';
+import { buildRankingFromDb } from '@/lib/engager-ranking';
+import { resolveInstagramAnalyticsContext } from '@/lib/instagram-analytics-context';
+import { resolveInstagramProfileFromCache, shouldSkipApifyCommentFetch } from '@/lib/tracked-cache';
+import { buildLastIncremental, urlsForIncrementalComments, type SyncMode } from '@/lib/incremental-sync';
 
 export async function POST(request: Request) {
     try {
@@ -13,7 +21,7 @@ export async function POST(request: Request) {
         }
 
         const body = await request.json();
-        const { runId, viewAsUserId, datasetId } = body;
+        const { runId, viewAsUserId, datasetId, ranking, meta, socialProfileId, igHandle, syncMode } = body;
 
         if (!datasetId) {
             return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
@@ -21,52 +29,79 @@ export async function POST(request: Request) {
 
         // @ts-ignore
         const callerRole = session?.user?.role;
-        const isAdminViewing = (callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !!viewAsUserId;
 
-        // --- LOG DE DEPURAÇÃO ---
-        console.log(`[SYNC] Iniciando processamento para dataset: ${datasetId}, viewAs: ${viewAsUserId}`);
-        
-        // 1. Get User's Social Profile for Instagram
-        let user;
-        try {
-            user = isAdminViewing 
-                ? await prisma.user.findUnique({
-                    where: { id: viewAsUserId! },
-                    include: { candidateProfile: { include: { socialProfiles: { where: { platform: SocialPlatform.INSTAGRAM } } } } },
-                })
-                : await prisma.user.findUnique({
-                    where: { email: session.user.email },
-                    include: { candidateProfile: { include: { socialProfiles: { where: { platform: SocialPlatform.INSTAGRAM } } } } },
-                });
-        } catch (dbError: any) {
-            console.error('[SYNC] Erro ao buscar usuário no DB:', dbError.message);
-            throw new Error(`Erro de acesso ao banco: ${dbError.message}`);
-        }
+        const ctx = await resolveInstagramAnalyticsContext(session.user, {
+            viewAsUserId,
+            socialProfileId,
+            igHandle,
+        });
 
-        if (!user || !user.candidateProfile) {
-            console.error('[SYNC] Candidato não encontrado para ID:', viewAsUserId || session.user.email);
+        if (!ctx) {
+            console.error('[SYNC] Candidato não encontrado para viewAs:', viewAsUserId || session.user.email);
             return NextResponse.json({ error: 'Perfil de candidato não encontrado.' }, { status: 404 });
         }
 
-        const instagramProfile = user.candidateProfile.socialProfiles[0];
-        if (!instagramProfile) {
-            console.error('[SYNC] Perfil Instagram não vinculado para:', user.name);
-            return NextResponse.json({ error: 'Perfil do Instagram não encontrado.' }, { status: 404 });
-        }
+        const instagramProfile = ctx.socialProfile;
+        const user = ctx.user;
+        const candidateId = ctx.candidateProfile.id;
 
-        console.log(`[SYNC] Processando dados para @${instagramProfile.handle}...`);
+        console.log(`[SYNC] Processando dados para @${apifyService.cleanHandle(instagramProfile.handle)}...`);
+
+        const cleanHandle = apifyService.cleanHandle(instagramProfile.handle);
 
         // Fetch scraped data
         const scrapedData = await apifyService.fetchRunItems(datasetId);
 
-        // Update profile followers / posts
-        if (scrapedData.profile) {
+        // O scraper de posts nem sempre retorna seguidores — cache DB antes do Apify
+        let profileFollowers = scrapedData.profile?.followers ?? null;
+        let profilePostsCount = scrapedData.profile?.postsCount ?? null;
+
+        if (!profileFollowers || profileFollowers <= 0) {
+            const candidateRow = await prisma.candidateProfile.findUnique({
+                where: { id: candidateId },
+                select: { instagramFollowers: true },
+            });
+            const cached = resolveInstagramProfileFromCache(
+                instagramProfile,
+                candidateRow ?? undefined
+            );
+            if (cached?.followers) {
+                profileFollowers = cached.followers;
+                profilePostsCount = cached.postsCount ?? profilePostsCount;
+                console.log(
+                    `[SYNC] Seguidores do cache DB: ${profileFollowers} — pulando getProfileInfo.`
+                );
+            }
+        }
+
+        if (!profileFollowers || profileFollowers <= 0) {
+            console.log(
+                `[SYNC] Seguidores ausentes no dataset e no cache — buscando via getProfileInfo(@${cleanHandle})...`
+            );
+            const profileInfo = await apifyService.getProfileInfo(cleanHandle);
+            if (profileInfo?.followers) {
+                profileFollowers = profileInfo.followers;
+                profilePostsCount = profileInfo.postsCount ?? profilePostsCount;
+                console.log(`[SYNC] Seguidores obtidos via Apify: ${profileFollowers}`);
+            }
+        }
+
+        // Update profile followers / posts (+ corrige handle se estiver como URL)
+        const profileUpdate: Record<string, unknown> = {};
+        if (cleanHandle && cleanHandle !== instagramProfile.handle) {
+            profileUpdate.handle = cleanHandle;
+        }
+        if (profileFollowers || profilePostsCount) {
+            profileUpdate.followers = profileFollowers ?? instagramProfile.followers;
+            profileUpdate.postsCount = profilePostsCount ?? instagramProfile.postsCount;
+        } else if (scrapedData.profile) {
+            profileUpdate.followers = scrapedData.profile.followers || instagramProfile.followers;
+            profileUpdate.postsCount = scrapedData.profile.postsCount || instagramProfile.postsCount;
+        }
+        if (Object.keys(profileUpdate).length > 0) {
             await prisma.socialProfile.update({
                 where: { id: instagramProfile.id },
-                data: {
-                    followers: scrapedData.profile.followers || instagramProfile.followers,
-                    postsCount: scrapedData.profile.postsCount || instagramProfile.postsCount,
-                }
+                data: profileUpdate,
             });
         }
 
@@ -138,7 +173,7 @@ export async function POST(request: Request) {
                     // Prevent duplicate IDs if the scraper doesn't provide one
                     let commentId = comment.id || `manual-${authorUsername}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
-                    const isCandidate = authorUsername === instagramProfile.handle;
+                    const isCandidate = authorUsername === cleanHandle || authorUsername === instagramProfile.handle;
 
                     try {
                         await prisma.comment.upsert({
@@ -175,13 +210,13 @@ export async function POST(request: Request) {
                                 where: {
                                     username_candidateId: {
                                         username: authorUsername,
-                                        candidateId: user.candidateProfile.id
+                                        candidateId: candidateId
                                     }
                                 },
                                 create: {
                                     username: authorUsername,
                                     metaUserId: authorMetaId,
-                                    candidateId: user.candidateProfile.id,
+                                    candidateId: candidateId,
                                     interactionScore: engagementValue,
                                     sentiment: sentiment, // Salvando o sentimento para análise futura
                                     lastInteractedAt: new Date(commentTimestamp)
@@ -218,6 +253,99 @@ export async function POST(request: Request) {
             });
         }
 
+        // Se o post-scraper não trouxe comentários, busca via Apify — exceto com ranking em cache recente
+        const commentCache = shouldSkipApifyCommentFetch(instagramProfile.rawApiData, {
+            hasNewPosts: newPostsCount > 0,
+        });
+
+        if (syncedCommentsCount === 0 && recentPosts.length > 0 && !commentCache.skip) {
+            const postRows = recentPosts.map((p: { permalink?: string; id?: string }) => ({
+                id: String(p.id || ''),
+                url: p.permalink,
+            }));
+
+            const incrementalUrls =
+                newPostsCount > 0
+                    ? urlsForIncrementalComments(postRows, newPostIds, APIFY_IG_POSTS_FOR_COMMENTS)
+                    : [];
+
+            const topUrls = (
+                incrementalUrls.length > 0
+                    ? incrementalUrls
+                    : (recentPosts
+                          .map((p: { permalink?: string }) => p.permalink)
+                          .filter(Boolean)
+                          .slice(0, APIFY_IG_POSTS_FOR_COMMENTS) as string[])
+            ).filter(Boolean);
+
+            if (topUrls.length > 0) {
+                console.log(
+                    `[SYNC] Sem comentários no dataset — buscando via instagram-scraper (${topUrls.length} post${newPostsCount > 0 ? '(s) novos' : ''})...`
+                );
+                const fetched = await apifyService.fetchInstagramComments(
+                    topUrls,
+                    APIFY_IG_COMMENTS_PER_POST
+                );
+
+                for (const raw of fetched as Record<string, unknown>[]) {
+                    const username = String(
+                        raw.ownerUsername ||
+                            (raw.owner as Record<string, unknown> | undefined)?.username ||
+                            raw.username ||
+                            ''
+                    )
+                        .trim()
+                        .replace(/^@/, '');
+                    if (!username || username.toLowerCase() === cleanHandle.toLowerCase()) continue;
+
+                    const postUrl = String(raw.postUrl || raw.inputUrl || raw.url || '');
+                    const shortCode = postUrl.match(/\/p\/([^/]+)/)?.[1];
+                    if (!shortCode) continue;
+
+                    const mediaPost = await prisma.mediaPost.findFirst({
+                        where: {
+                            socialProfileId: instagramProfile.id,
+                            permalink: { contains: shortCode },
+                        },
+                    });
+                    if (!mediaPost) continue;
+
+                    const commentId = String(raw.id || `ig-${username}-${mediaPost.id}-${syncedCommentsCount}`);
+                    const commentText = String(raw.text || raw.message || '');
+                    const likes = Number(raw.likesCount ?? raw.likes ?? 0) || 0;
+                    const commentTimestamp = String(
+                        raw.timestamp || raw.createdAt || new Date().toISOString()
+                    );
+
+                    try {
+                        await prisma.comment.upsert({
+                            where: { metaCommentId: commentId },
+                            create: {
+                                mediaPostId: mediaPost.id,
+                                metaCommentId: commentId,
+                                text: commentText,
+                                likeCount: likes,
+                                authorUsername: username,
+                                authorMetaId: String(raw.ownerId || '') || null,
+                                isFromCandidate: false,
+                                isHidden: false,
+                                createdAt: new Date(commentTimestamp),
+                            },
+                            update: { likeCount: likes },
+                        });
+                        syncedCommentsCount++;
+                    } catch (commentError: unknown) {
+                        const msg = commentError instanceof Error ? commentError.message : 'erro';
+                        console.error(`[SYNC] Falha ao salvar comentário de @${username}:`, msg);
+                    }
+                }
+            }
+        } else if (commentCache.skip) {
+            console.log(
+                `[SYNC] Ranking em cache (${commentCache.ranking?.length ?? 0} pessoas, ${commentCache.reason}) — pulando fetchInstagramComments.`
+            );
+        }
+
         // Snapshot pós-sync
         const profileAfter = await prisma.socialProfile.findUnique({ where: { id: instagramProfile.id } });
         const followersAfter = profileAfter?.followers ?? followersBefore;
@@ -229,6 +357,79 @@ export async function POST(request: Request) {
             where: { socialProfileId: instagramProfile.id },
             _sum: { commentsCount: true }
         }))._sum.commentsCount ?? 0;
+
+        const existingRaw = (instagramProfile.rawApiData || {}) as Record<string, unknown>;
+        const existingProfile = (existingRaw.profile || {}) as Record<string, unknown>;
+        const existingFullName =
+            typeof existingProfile.fullName === 'string' ? existingProfile.fullName : undefined;
+        const upToDateForCache = await prisma.socialProfile.findUnique({ where: { id: instagramProfile.id } });
+
+        let finalRanking = Array.isArray(ranking) && ranking.length > 0 ? ranking : [];
+        let finalMeta =
+            meta && typeof meta === 'object'
+                ? (meta as Record<string, unknown>)
+                : null;
+
+        if (finalRanking.length === 0) {
+            if (commentCache.skip) {
+                const fromDb = await buildRankingFromDb(instagramProfile.id, cleanHandle);
+                if (fromDb.ranking.length > 0) {
+                    finalRanking = fromDb.ranking;
+                    if (!finalMeta || !finalMeta.commentsAnalyzed) {
+                        finalMeta = {
+                            postsAnalyzed: syncedPostsCount || recentPosts.length,
+                            commentsAnalyzed: fromDb.commentsAnalyzed || syncedCommentsCount,
+                            uniqueEngagers: fromDb.uniqueEngagers,
+                        };
+                    }
+                } else if (commentCache.ranking) {
+                    finalRanking = commentCache.ranking;
+                    if (!finalMeta && commentCache.meta) {
+                        finalMeta = commentCache.meta;
+                    }
+                }
+            } else {
+                const fromDb = await buildRankingFromDb(instagramProfile.id, cleanHandle);
+                finalRanking = fromDb.ranking;
+                if (!finalMeta || !finalMeta.commentsAnalyzed) {
+                    finalMeta = {
+                        postsAnalyzed: syncedPostsCount || recentPosts.length,
+                        commentsAnalyzed: fromDb.commentsAnalyzed || syncedCommentsCount,
+                        uniqueEngagers: fromDb.uniqueEngagers,
+                    };
+                }
+            }
+        } else if (!finalMeta) {
+            finalMeta = {
+                postsAnalyzed: recentPosts.length,
+                commentsAnalyzed: syncedCommentsCount,
+                uniqueEngagers: finalRanking.length,
+            };
+        }
+
+        await prisma.socialProfile.update({
+            where: { id: instagramProfile.id },
+            data: {
+                rawApiData: {
+                    ...existingRaw,
+                    profile: {
+                        username: cleanHandle,
+                        fullName:
+                            (scrapedData.profile as { fullName?: string } | undefined)?.fullName ??
+                            existingFullName,
+                        followers: upToDateForCache?.followers ?? profileFollowers,
+                        postsCount: upToDateForCache?.postsCount ?? profilePostsCount,
+                    },
+                    lastRanking: finalRanking,
+                    lastMeta: finalMeta as Prisma.InputJsonValue,
+                    lastSyncedAt: new Date().toISOString(),
+                    lastIncremental: buildLastIncremental(
+                        (syncMode as SyncMode) || (newPostsCount > 0 || updatedPostsCount > 0 ? 'incremental' : 'full'),
+                        newPostIds
+                    ),
+                },
+            },
+        });
 
         return NextResponse.json({
             success: true,
@@ -242,6 +443,7 @@ export async function POST(request: Request) {
                 followersChange: followersAfter - followersBefore,
                 likesChange: likesAfter - likesBefore,
                 commentsChange: commentsAfter - commentsBefore,
+                syncMode: syncMode || (newPostsCount > 0 ? 'incremental' : 'full'),
             }
         });
 

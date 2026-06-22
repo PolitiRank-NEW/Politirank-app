@@ -4,6 +4,8 @@ import { prisma } from '@/app/lib/prisma';
 import { metaService } from '@/services/metaService';
 import { apifyService } from '@/services/apifyService';
 import { SocialPlatform } from '@prisma/client';
+import { APIFY_POSTS_LIMIT } from '@/lib/apify-limits';
+import { resolveInstagramAnalyticsContext } from '@/lib/instagram-analytics-context';
 
 export async function POST(request: Request) {
     try {
@@ -15,42 +17,18 @@ export async function POST(request: Request) {
         // @ts-ignore
         const callerRole = session?.user?.role;
         const { searchParams } = new URL(request.url);
-        const viewAsUserId = searchParams.get('viewAs');
-
-        const isAdminViewing = (callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !!viewAsUserId;
-
-        // 1. Get User's Social Profile for Instagram
-        const user = isAdminViewing 
-            ? await prisma.user.findUnique({
-                where: { id: viewAsUserId! },
-                include: {
-                    candidateProfile: {
-                        include: {
-                            socialProfiles: {
-                                where: { platform: SocialPlatform.INSTAGRAM }
-                            }
-                        }
-                    }
-                },
-            })
-            : await prisma.user.findUnique({
-                where: { email: session.user.email },
-            include: {
-                candidateProfile: {
-                    include: {
-                        socialProfiles: {
-                            where: { platform: SocialPlatform.INSTAGRAM }
-                        }
-                    }
-                }
-            },
+        const ctx = await resolveInstagramAnalyticsContext(session.user, {
+            viewAsUserId: searchParams.get('viewAs'),
+            socialProfileId: searchParams.get('socialProfileId'),
+            igHandle: searchParams.get('igHandle'),
         });
 
-        if (!user || !user.candidateProfile) {
+        if (!ctx) {
             return NextResponse.json({ error: 'Perfil de candidato não encontrado.' }, { status: 404 });
         }
 
-        const instagramProfile = user.candidateProfile.socialProfiles[0];
+        const instagramProfile = ctx.socialProfile;
+        const user = ctx.user;
 
         if (!instagramProfile || (!instagramProfile.accessToken && !instagramProfile.handle)) {
             return NextResponse.json({ error: 'Perfil do Instagram ou Handle não encontrado. Conecte novamente.' }, { status: 404 });
@@ -64,29 +42,9 @@ export async function POST(request: Request) {
         if (useApify) {
             console.log(`Usando Apify Scraper p/ handle @${instagramProfile.handle}...`);
             try {
-                // Sincronização inteligente: buscar menos posts se já temos dados recentes
-                const dbPosts = await prisma.mediaPost.findMany({
-                    where: { socialProfileId: instagramProfile.id },
-                    orderBy: { postedAt: 'desc' },
-                    take: 1
+                const runId = await apifyService.startScrapeRun(instagramProfile.handle, {
+                    resultsLimit: APIFY_POSTS_LIMIT,
                 });
-                
-                let limit = 15; // default inicial
-                let oldestPostDate: string | undefined = undefined;
-                
-                if (dbPosts.length > 0) {
-                    // Busca a data do último post sincronizado
-                    const lastSync = dbPosts[0].postedAt || new Date();
-                    
-                    // Subtraímos 3 dias da data do último post para pegar atualizações recentes (likes/comments tardios)
-                    const bufferDate = new Date(lastSync);
-                    bufferDate.setDate(bufferDate.getDate() - 3);
-                    oldestPostDate = bufferDate.toISOString();
-                    
-                    limit = 20; // Permite um limite maior já que estamos restringindo por data
-                }
-
-                const runId = await apifyService.startScrapeRun(instagramProfile.handle, { resultsLimit: limit, oldestPostDate });
                 // Return immediately so the frontend can poll the status!
                 return NextResponse.json({
                     useApify: true,

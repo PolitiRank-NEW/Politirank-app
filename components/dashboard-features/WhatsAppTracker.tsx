@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { MessageCircle, Database, Users, TrendingUp, Info, Activity, UserPlus, UserMinus, FileDigit, BarChart, User, LayoutGrid, LayoutList, Sprout, Loader2, CheckCircle, AlertCircle, Download, GitMerge, ChevronRight } from "lucide-react";
+import { useState, useRef } from "react";
+import { MessageCircle, Database, Users, TrendingUp, Info, Activity, UserPlus, UserMinus, FileDigit, BarChart, User, LayoutGrid, LayoutList, Sprout, Loader2, CheckCircle, AlertCircle, Download, Upload, FileSpreadsheet, GitMerge, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WhatsAppGroupDetail } from "./WhatsAppGroupDetail";
+import Papa from "papaparse";
 
 interface WhatsAppTrackerProps {
     hasWhatsapp?: boolean;
@@ -18,6 +19,9 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
     const [crossLoading, setCrossLoading] = useState(false);
     const [crossResult, setCrossResult] = useState<string | null>(null);
+    const [importing, setImporting] = useState(false);
+    const [importResult, setImportResult] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
     const canSeed = isAdmin && !!candidateProfileId;
@@ -74,6 +78,56 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
     function handleExportCsv() {
         if (!candidateProfileId) return;
         window.open(`/api/whatsapp/export?candidateId=${candidateProfileId}`, '_blank');
+    }
+
+    function handleDownloadTemplate() {
+        window.open('/api/whatsapp/import', '_blank');
+    }
+
+    function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file || !candidateProfileId || !isAdmin) return;
+
+        setImportResult(null);
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: async (results) => {
+                const rows = results.data as Record<string, unknown>[];
+                if (rows.length === 0) {
+                    setImportResult('CSV vazio ou sem linhas válidas.');
+                    return;
+                }
+
+                const confirmImport = window.confirm(
+                    `Importar ${rows.length} pessoa(s) para os grupos do candidato?\n\nA coluna "Grupo" deve corresponder ao nome do grupo.\nDuplicados serão ignorados.`
+                );
+                if (!confirmImport) return;
+
+                setImporting(true);
+                try {
+                    const res = await fetch('/api/whatsapp/import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ candidateId: candidateProfileId, rows, skipDuplicates: true }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Erro na importação.');
+                    setImportResult(data.message);
+                    setTimeout(() => window.location.reload(), 2000);
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : 'Erro na importação.';
+                    setImportResult(message);
+                } finally {
+                    setImporting(false);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                }
+            },
+            error: (parseError: Error) => {
+                setImportResult(`Erro ao ler CSV: ${parseError.message}`);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            },
+        });
     }
 
     const readOnly = userRole === 'CANDIDATO';
@@ -147,6 +201,28 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                         {isAdmin && candidateProfileId && (
                             <div className="flex flex-wrap items-center gap-2">
                                 <button
+                                    onClick={handleDownloadTemplate}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-all shadow-sm"
+                                >
+                                    <FileSpreadsheet className="w-4 h-4" />
+                                    Modelo CSV
+                                </button>
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={importing}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 transition-all disabled:opacity-60 shadow-sm"
+                                >
+                                    {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                                    Importar CSV
+                                </button>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept=".csv,text/csv"
+                                    className="hidden"
+                                    onChange={handleImportFileChange}
+                                />
+                                <button
                                     onClick={handleExportCsv}
                                     className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-all shadow-sm"
                                 >
@@ -159,10 +235,12 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                     className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 transition-all disabled:opacity-60 shadow-sm"
                                 >
                                     {crossLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitMerge className="w-4 h-4" />}
-                                    Cruzar IG
+                                    Cruzar IG/FB
                                 </button>
-                                {crossResult && (
-                                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">{crossResult}</span>
+                                {(crossResult || importResult) && (
+                                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                                        {importResult || crossResult}
+                                    </span>
                                 )}
                             </div>
                         )}

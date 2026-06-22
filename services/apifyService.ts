@@ -1,6 +1,13 @@
+import { cleanInstagramHandle } from '@/lib/instagram-handle';
+import { APIFY_POSTS_LIMIT, parsePostTimestamp } from '@/lib/apify-limits';
+import { APIFY_ACTORS } from '@/lib/apify-actors';
+
+const IG_POST_SCRAPER = APIFY_ACTORS.instagram.postScraper;
+const IG_SCRAPER = APIFY_ACTORS.instagram.scraper;
+
 export const apifyService = {
   cleanHandle(handle: string) {
-    return handle.replace('@', '').trim();
+    return cleanInstagramHandle(handle);
   },
 
   getToken() {
@@ -40,7 +47,7 @@ export const apifyService = {
 
     try {
       const res = await fetch(
-        `https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token=${token}`,
+        `https://api.apify.com/v2/acts/${IG_SCRAPER}/run-sync-get-dataset-items?token=${token}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -60,9 +67,9 @@ export const apifyService = {
       return {
         username: p.username || cleanUser,
         fullName: p.fullName || null,
-        followers: p.followersCount ?? null,
-        following: p.followsCount ?? null,
-        postsCount: p.postsCount ?? null,
+        followers: p.followersCount ?? p.followers ?? null,
+        following: p.followsCount ?? p.following ?? null,
+        postsCount: p.postsCount ?? p.mediaCount ?? null,
         verified: p.verified ?? false,
         profilePicUrl: p.profilePicUrl || null,
         biography: p.biography || null,
@@ -77,10 +84,10 @@ export const apifyService = {
     const token = this.getToken();
     const cleanUser = this.cleanHandle(handle);
 
-    // Documentação técnica: O ator nH2AHrwxeTRJoN5hX espera 'username' como um ARRAY de strings.
+    // O post-scraper espera 'username' como um ARRAY de strings.
     const input: any = {
       username: [cleanUser],
-      resultsLimit: options?.resultsLimit || 15,
+      resultsLimit: options?.resultsLimit ?? APIFY_POSTS_LIMIT,
       proxyConfiguration: {
         useApifyProxy: true
       }
@@ -90,10 +97,9 @@ export const apifyService = {
         input.oldestPostDate = options.oldestPostDate;
     }
 
-    console.log(`[Apify] Iniciando Extração Profissional (ID: nH2AHrwxeTRJoN5hX) para @${cleanUser} com limite de ${input.resultsLimit} posts e data inicial ${input.oldestPostDate || 'N/A'}...`);
-    
-    // Usamos o ID fixo nH2AHrwxeTRJoN5hX para evitar erros de resolução de slug
-    const res = await fetch(`https://api.apify.com/v2/acts/nH2AHrwxeTRJoN5hX/runs?token=${token}`, {
+    console.log(`[Apify] Iniciando post-scraper (${IG_POST_SCRAPER}) para @${cleanUser} com limite de ${input.resultsLimit} posts...`);
+
+    const res = await fetch(`https://api.apify.com/v2/acts/${IG_POST_SCRAPER}/runs?token=${token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input)
@@ -110,7 +116,7 @@ export const apifyService = {
 
   async getRunStatus(runId: string) {
     const token = this.getToken();
-    const res = await fetch(`https://api.apify.com/v2/acts/nH2AHrwxeTRJoN5hX/runs/${runId}?token=${token}`);
+    const res = await fetch(`https://api.apify.com/v2/acts/${IG_POST_SCRAPER}/runs/${runId}?token=${token}`);
     if (!res.ok) return { status: 'UNKNOWN', datasetId: null };
     
     const json = await res.json();
@@ -151,21 +157,25 @@ export const apifyService = {
     const validPosts = rawPosts.filter((item: any) => item && (item.id || item.shortCode));
 
     let profile = null;
-    // Tenta pegar dados do perfil do primeiro post, se disponível
+    // Tenta pegar dados do perfil do primeiro post ou do item raiz
     const firstPost = validPosts[0];
-    if (firstPost && (firstPost.ownerFollowers !== undefined || firstPost.ownerPostsCount !== undefined)) {
+    const followersFromPost = firstPost?.ownerFollowers ?? firstPost?.followersCount;
+    const postsFromPost = firstPost?.ownerPostsCount ?? firstPost?.postsCount;
+
+    if (firstPost && (followersFromPost !== undefined || postsFromPost !== undefined)) {
       profile = {
-        followers: firstPost.ownerFollowers || 0,
-        postsCount: firstPost.ownerPostsCount || 0,
+        followers: followersFromPost ?? 0,
+        postsCount: postsFromPost ?? 0,
       };
-    } else if (firstItem.followersCount !== undefined) {
+    } else if (firstItem.followersCount !== undefined || firstItem.postsCount !== undefined) {
       profile = {
-        followers: firstItem.followersCount || 0,
-        postsCount: firstItem.postsCount || 0,
+        followers: firstItem.followersCount ?? firstItem.followers ?? 0,
+        postsCount: firstItem.postsCount ?? 0,
       };
     }
 
-    const posts = validPosts.map((item: any) => ({
+    const posts = validPosts
+      .map((item: any) => ({
       id: String(item.id || item.shortCode),
       caption: item.caption || '',
       media_type: item.type === 'Video' ? 'VIDEO' : item.type === 'Sidecar' ? 'CAROUSEL_ALBUM' : 'IMAGE',
@@ -182,9 +192,46 @@ export const apifyService = {
         timestamp: c.timestamp || new Date().toISOString(),
         likesCount: c.likesCount || 0
       })) || [],
-    }));
+    }))
+      .sort((a: { timestamp?: string }, b: { timestamp?: string }) => parsePostTimestamp(b.timestamp) - parsePostTimestamp(a.timestamp))
+      .slice(0, APIFY_POSTS_LIMIT);
 
-    // Limit to 10 posts to ensure stability and speed on the DB side
-    return { profile, posts: posts.slice(0, 10) };
-  }
+    return { profile, posts };
+  },
+
+  /** Busca comentários dos posts via instagram-scraper (modo comments). Só quando o post-scraper não traz latestComments. */
+  async fetchInstagramComments(postUrls: string[], resultsLimit = 25) {
+    const token = this.getToken();
+    const urls = postUrls.filter(Boolean).slice(0, 6);
+    if (!urls.length) return [];
+
+    const input = {
+      directUrls: urls,
+      resultsType: 'comments',
+      resultsLimit,
+      proxyConfiguration: { useApifyProxy: true },
+    };
+
+    try {
+      const res = await fetch(
+        `https://api.apify.com/v2/acts/${IG_SCRAPER}/run-sync-get-dataset-items?token=${token}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        }
+      );
+
+      if (!res.ok) {
+        console.warn('[Apify] fetchInstagramComments falhou:', res.status);
+        return [];
+      }
+
+      const items = await res.json();
+      return Array.isArray(items) ? items : [];
+    } catch (e) {
+      console.warn('[Apify] fetchInstagramComments erro:', e);
+      return [];
+    }
+  },
 };

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
-import { crossReferenceMembersByIg } from '@/lib/whatsapp-utils';
+import { crossReferenceMembers } from '@/lib/whatsapp-utils';
 
 export async function POST(req: Request) {
     try {
@@ -19,11 +19,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'candidateId é obrigatório.' }, { status: 400 });
         }
 
-        const result = await crossReferenceMembersByIg(candidateId);
+        const result = await crossReferenceMembers(candidateId);
 
         return NextResponse.json({
             success: true,
-            message: `Cruzamento concluído: ${result.matched} de ${result.total} membros com @ IG encontrados no ranking.`,
+            message: `Cruzamento concluído — IG: ${result.ig.matched}/${result.ig.total} | FB: ${result.fb.matched}/${result.fb.total}.`,
             ...result,
         });
     } catch (error: any) {

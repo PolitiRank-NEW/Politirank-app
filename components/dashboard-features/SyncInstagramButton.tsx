@@ -160,7 +160,8 @@ export function SyncInstagramButton({ className = '', viewAsUserId, onSyncComple
         isOpen={phase === 'syncing' || phase === 'done'} 
         progress={progress} 
         phase={phase} 
-        statusLabel={statusLabel} 
+        statusLabel={statusLabel}
+        platform="instagram"
       />
     </>
   );

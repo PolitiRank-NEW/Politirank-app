@@ -1,21 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/app/lib/utils";
 import { ConnectInstagramButton } from "@/components/dashboard-features/ConnectInstagramButton";
-import { InstagramStats } from "@/components/dashboard-features/InstagramStats";
+import { SocialProfileTracker } from "@/components/dashboard-features/SocialProfileTracker";
 import { PainelTab } from "@/components/dashboard-features/PainelTab";
 import { WhatsAppTracker } from "@/components/dashboard-features/WhatsAppTracker";
 import { ClientesManager } from "@/components/dashboard-features/ClientesManager";
-import { SyncInstagramButton } from "@/components/dashboard-features/SyncInstagramButton";
-import type { SyncStats } from "@/components/dashboard/SyncResultCard";
 
-type TabValue = "painel" | "instagram" | "whatsapp" | "clientes";
+type TabValue = "painel" | "instagram" | "facebook" | "whatsapp" | "clientes";
 
 interface ClientDashboardTabsProps {
     hasInstagram: boolean;
     hasFacebook?: boolean;
     hasWhatsapp?: boolean;
+    instagramHandle?: string;
+    facebookHandle?: string;
     superFans: any[];
     totalInteractions?: number;
     userRole?: string;
@@ -30,6 +30,8 @@ export function ClientDashboardTabs({
     hasInstagram,
     hasFacebook = false,
     hasWhatsapp = false,
+    instagramHandle = "",
+    facebookHandle = "",
     whatsappMessages = 0,
     whatsappLiderancas = [],
     superFans,
@@ -40,47 +42,25 @@ export function ClientDashboardTabs({
     candidateProfileId,
 }: ClientDashboardTabsProps) {
     const [activeTab, setActiveTab] = useState<TabValue>("painel");
-    const [syncResult, setSyncResult] = useState<{ stats: SyncStats; syncedAt: Date } | null>(null);
-
-    useEffect(() => {
-        const savedResult = sessionStorage.getItem('lastSyncResult');
-        if (savedResult) {
-            try {
-                const parsed = JSON.parse(savedResult);
-                setSyncResult({
-                    stats: parsed.stats,
-                    syncedAt: new Date(parsed.syncedAt)
-                });
-                setActiveTab("instagram"); // Auto-navega para mostrar o resultado
-            } catch (e) {
-                console.error("Erro ao ler lastSyncResult:", e);
-            }
-            sessionStorage.removeItem('lastSyncResult');
-        }
-    }, []);
 
     const tabs: { label: string; value: TabValue }[] = [
         { label: "Painel", value: "painel" },
         { label: "Instagram", value: "instagram" },
-        { label: "WhatsApp", value: "whatsapp" },
     ];
+
+    if (hasFacebook) {
+        tabs.push({ label: "Facebook", value: "facebook" });
+    }
+
+    tabs.push({ label: "WhatsApp", value: "whatsapp" });
 
     if (userRole !== 'CANDIDATO') {
         tabs.push({ label: "Clientes", value: "clientes" });
     }
 
-    // O handleSyncComplete não é mais usado diretamente pelo botão (que recarrega a página),
-    // mas mantemos por compatibilidade se decidirmos não recarregar no futuro.
-    function handleSyncComplete(stats: SyncStats, syncedAt: Date) {
-        setSyncResult({ stats, syncedAt });
-        setActiveTab("instagram");
-    }
-
     return (
         <div className="space-y-6">
-            {/* Navegação por abas — centralizada, botão de sync flutuante à direita */}
-            <div className="relative flex justify-center w-full">
-                {/* Pill Navigation — sempre centralizado */}
+            <div className="flex justify-center w-full">
                 <div className="inline-flex flex-wrap items-center justify-center gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-2xl sm:rounded-full w-full sm:w-auto">
                     {tabs.map((tab) => (
                         <button
@@ -94,36 +74,11 @@ export function ClientDashboardTabs({
                             )}
                         >
                             {tab.label}
-                            {/* Indicador de resultado de sync na aba Instagram */}
-                            {tab.value === "instagram" && syncResult && activeTab !== "instagram" && (
-                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900 animate-pulse" />
-                            )}
                         </button>
                     ))}
                 </div>
-
-                {/* Botão de Sync — posicionado absolutamente à direita sem deslocar as abas */}
-                {hasInstagram && (
-                    <div className="absolute right-0 top-1/2 -translate-y-1/2 hidden sm:block">
-                        <SyncInstagramButton
-                            viewAsUserId={viewAsUserId}
-                            onSyncComplete={handleSyncComplete}
-                        />
-                    </div>
-                )}
             </div>
 
-            {/* Botão de Sync mobile (abaixo das abas em telas pequenas) */}
-            {hasInstagram && (
-                <div className="flex justify-end sm:hidden">
-                    <SyncInstagramButton
-                        viewAsUserId={viewAsUserId}
-                        onSyncComplete={handleSyncComplete}
-                    />
-                </div>
-            )}
-
-            {/* Tab Views */}
             <div className="mt-6">
                 {activeTab === "painel" && (
                     <PainelTab
@@ -138,11 +93,13 @@ export function ClientDashboardTabs({
 
                 {activeTab === "instagram" && (
                     <div className="space-y-6">
-                        {hasInstagram ? (
-                            <InstagramStats
+                        {hasInstagram && instagramHandle ? (
+                            <SocialProfileTracker
+                                platform="instagram"
+                                connectedHandle={instagramHandle}
                                 viewAsUserId={viewAsUserId}
-                                syncResult={syncResult}
-                                onClearSyncResult={() => setSyncResult(null)}
+                                isActive={activeTab === "instagram"}
+                                userRole={userRole}
                             />
                         ) : (
                             <div className="bg-white dark:bg-slate-950 rounded-2xl p-8 shadow-sm text-center flex flex-col items-center justify-center min-h-[400px] border border-slate-200 dark:border-slate-800">
@@ -154,8 +111,34 @@ export function ClientDashboardTabs({
                                     </svg>
                                 </div>
                                 <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3">Instagram não conectado</h3>
-                                <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-md">Para acessar o painel de métricas completas e extrair dados de engajamento, conecte agora a sua conta profissional.</p>
+                                <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-md">Conecte sua conta profissional ou peça ao administrador para vincular o @ do Instagram no cadastro.</p>
                                 <ConnectInstagramButton isConnected={false} />
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {activeTab === "facebook" && (
+                    <div className="space-y-6">
+                        {hasFacebook && facebookHandle ? (
+                            <SocialProfileTracker
+                                platform="facebook"
+                                connectedHandle={facebookHandle}
+                                viewAsUserId={viewAsUserId}
+                                isActive={activeTab === "facebook"}
+                                userRole={userRole}
+                            />
+                        ) : (
+                            <div className="bg-white dark:bg-slate-950 rounded-2xl p-8 shadow-sm text-center flex flex-col items-center justify-center min-h-[400px] border border-slate-200 dark:border-slate-800">
+                                <div className="w-16 h-16 bg-blue-50 dark:bg-blue-900/20 rounded-full flex items-center justify-center mb-6">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-blue-600">
+                                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3">Facebook não vinculado</h3>
+                                <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-md">
+                                    Peça ao administrador para vincular a URL ou página do Facebook no cadastro do candidato.
+                                </p>
                             </div>
                         )}
                     </div>

@@ -130,6 +130,7 @@ model SocialProfile {
 
   // Relations for Deep Analytics
   mediaPosts          MediaPost[]
+  syncSnapshots       SocialSyncSnapshot[]
 }
 
 // ----------------------------------------------------------------------------
@@ -205,6 +206,24 @@ model UserInteraction {
   lastInteractedAt DateTime @default(now())
 
   @@unique([username, candidateId]) // Ensure we aggregate interactions per user per candidate
+}
+
+// Histórico de sincronizações IG/FB (salvo manualmente pelo SUPER_ADMIN)
+model SocialSyncSnapshot {
+  id              String         @id @default(auto()) @map("_id") @db.ObjectId
+  socialProfileId String         @db.ObjectId
+  socialProfile   SocialProfile  @relation(fields: [socialProfileId], references: [id], onDelete: Cascade)
+  candidateId     String         @db.ObjectId
+  platform        SocialPlatform
+  syncedAt        DateTime       @default(now())
+  profile         Json
+  posts           Json
+  ranking         Json
+  meta            Json
+  createdById     String?        @db.ObjectId
+
+  @@index([socialProfileId, syncedAt])
+  @@index([candidateId, platform, syncedAt])
 }
 
 // ----------------------------------------------------------------------------
@@ -315,11 +334,21 @@ model WhatsappGroupMember {
 
   // Votos em enquete (edição manual apenas SUPER_ADMIN)
   pollVotes        Int      @default(0)
+  // Histórico detalhado: [{ pollTitle, option, votedAt? }]
+  pollVotesDetail  Json?
 
   // Cruzamento com dados de IG (por @instagram)
   igMatched        Boolean  @default(false)
   igUsername       String?
   igInteractionScore Int?
+
+  // Cruzamento com dados de FB (por @facebook / nome)
+  fbMatched        Boolean  @default(false)
+  fbUsername       String?
+  fbInteractionScore Int?
+
+  // Data de entrada no grupo (manual ou importação; fallback: createdAt)
+  joinedAt         DateTime?
 
   isManual         Boolean  @default(true)
   createdAt        DateTime @default(now())

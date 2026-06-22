@@ -30,12 +30,16 @@ export async function PATCH(
         if (!existing) return NextResponse.json({ error: 'Membro não encontrado.' }, { status: 404 });
 
         const body = await req.json();
-        const { name, phone, instagramHandle, facebookHandle, pollVotes } = body;
+        const { name, phone, instagramHandle, facebookHandle, pollVotes, pollVotesDetail, joinedAt } = body;
 
         const data: Record<string, unknown> = { updatedAt: new Date() };
 
         if (name !== undefined) data.name = name || null;
         if (phone !== undefined) data.phone = phone || null;
+        if (joinedAt !== undefined) {
+            const d = joinedAt ? new Date(joinedAt) : null;
+            data.joinedAt = d && !Number.isNaN(d.getTime()) ? d : null;
+        }
 
         // Liderança e admin podem editar IG/FB
         if (instagramHandle !== undefined) {
@@ -46,6 +50,9 @@ export async function PATCH(
         }
         if (facebookHandle !== undefined) {
             data.facebookHandle = facebookHandle ? String(facebookHandle).replace(/^@/, '') : null;
+            data.fbMatched = false;
+            data.fbUsername = null;
+            data.fbInteractionScore = null;
         }
 
         // Apenas SUPER_ADMIN altera votos em enquete
@@ -55,6 +62,15 @@ export async function PATCH(
             }
             const pv = parseOptionalNumber(pollVotes);
             if (pv !== undefined) data.pollVotes = pv;
+        }
+        if (pollVotesDetail !== undefined) {
+            if (!isSuperAdmin) {
+                return NextResponse.json({ error: 'Apenas SUPER_ADMIN pode editar histórico de enquetes.' }, { status: 403 });
+            }
+            data.pollVotesDetail = pollVotesDetail;
+            if (Array.isArray(pollVotesDetail)) {
+                data.pollVotes = pollVotesDetail.length;
+            }
         }
 
         const member = await prisma.whatsappGroupMember.update({

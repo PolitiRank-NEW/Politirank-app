@@ -1,5 +1,5 @@
 import { ConnectInstagramButton } from '@/components/dashboard-features/ConnectInstagramButton';
-import { InstagramStats } from '@/components/dashboard-features/InstagramStats';
+import { SocialProfileTracker } from '@/components/dashboard-features/SocialProfileTracker';
 import { SocialPlatform } from '@prisma/client';
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
@@ -278,6 +278,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           hasInstagram={hasInstagram}
           hasFacebook={hasFacebook}
           hasWhatsapp={hasWhatsappData}
+          instagramHandle={instagramProfile?.handle || ''}
+          facebookHandle={facebookProfile?.handle || ''}
           whatsappMessages={whatsappMessages}
           whatsappLiderancas={whatsappLiderancas}
           superFans={topInteractors}
@@ -345,9 +347,13 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
               instagramUsername={instagramProfile?.handle}
             />
           </div>
-          {!!instagramProfile && (
+          {!!instagramProfile && instagramProfile.handle && (
             <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800">
-              <InstagramStats />
+              <SocialProfileTracker
+                platform="instagram"
+                connectedHandle={instagramProfile.handle}
+                isActive
+              />
             </div>
           )}
         </div>
@@ -359,6 +365,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           hasInstagram={globalHasInstagram || hasInstagram}
           hasFacebook={hasFacebook}
           hasWhatsapp={globalWhatsappLiderancas.length > 0 || hasWhatsapp}
+          instagramHandle={instagramProfile?.handle || ''}
+          facebookHandle={facebookProfile?.handle || ''}
           whatsappMessages={whatsappMessages}
           whatsappLiderancas={globalWhatsappLiderancas.length > 0 ? globalWhatsappLiderancas : whatsappLiderancas}
           superFans={globalTopInteractors}

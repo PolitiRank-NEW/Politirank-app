@@ -1,77 +1,43 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/app/lib/prisma';
-import { SocialPlatform } from '@prisma/client';
+import { resolveInstagramAnalyticsContext } from '@/lib/instagram-analytics-context';
 
 export async function GET(request: Request) {
     try {
         const session = await auth();
-        if (!session || !session.user || !session.user.email) {
+        if (!session?.user?.email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        // @ts-ignore
-        const callerRole = session?.user?.role;
         const { searchParams } = new URL(request.url);
-        const viewAsUserId = searchParams.get('viewAs');
-        
-        let targetId = viewAsUserId;
-        if ((callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !viewAsUserId) {
-             const firstCandidate = await prisma.user.findFirst({ 
-                 where: { 
-                     role: 'CANDIDATO',
-                     candidateProfile: {
-                         socialProfiles: {
-                             some: { platform: 'INSTAGRAM' }
-                         }
-                     }
-                 },
-                 orderBy: { createdAt: 'desc' }
-             });
-             if (firstCandidate) {
-                  targetId = firstCandidate.id;
-             }
-        }
-        const isAdminViewing = (callerRole === 'ADMIN' || callerRole === 'SUPER_ADMIN') && !!targetId;
+        const ctx = await resolveInstagramAnalyticsContext(session.user, {
+            viewAsUserId: searchParams.get('viewAs'),
+            socialProfileId: searchParams.get('socialProfileId'),
+            igHandle: searchParams.get('igHandle'),
+        });
 
-        const user = isAdminViewing
-            ? await prisma.user.findUnique({
-                where: { id: targetId! },
-                include: { candidateProfile: { include: { socialProfiles: { where: { platform: SocialPlatform.INSTAGRAM } } } } },
-            })
-            : await prisma.user.findUnique({
-                where: { email: session.user.email },
-                include: { candidateProfile: { include: { socialProfiles: { where: { platform: SocialPlatform.INSTAGRAM } } } } },
-            });
-
-        if (!user || !user.candidateProfile || user.candidateProfile.socialProfiles.length === 0) {
+        if (!ctx) {
             return NextResponse.json({ error: 'Perfil do Instagram não configurado.' }, { status: 404 });
         }
 
-        const instagramProfile = user.candidateProfile.socialProfiles[0];
-
-        // Fetch recent posts to build timeline
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
         const posts = await prisma.mediaPost.findMany({
-            where: {
-                socialProfileId: instagramProfile.id
-            },
+            where: { socialProfileId: ctx.socialProfile.id },
             orderBy: { postedAt: 'asc' },
             select: {
                 likesCount: true,
                 commentsCount: true,
-                postedAt: true
-            }
+                postedAt: true,
+            },
         });
 
-        // Aggregate by date (YYYY-MM-DD)
-        const timelineMap = new Map<string, { dateStr: string, likes: number, comments: number, total: number }>();
+        const timelineMap = new Map<
+            string,
+            { dateStr: string; likes: number; comments: number; total: number }
+        >();
 
-        posts.forEach((post: any) => {
+        posts.forEach((post) => {
             const dateObj = new Date(post.postedAt);
-            // Format as DD/MM snippet for charts
             const dateStr = `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
 
             if (!timelineMap.has(dateStr)) {
@@ -81,18 +47,18 @@ export async function GET(request: Request) {
             const entry = timelineMap.get(dateStr)!;
             entry.likes += post.likesCount;
             entry.comments += post.commentsCount;
-            entry.total += (post.likesCount + post.commentsCount);
+            entry.total += post.likesCount + post.commentsCount;
         });
-
-        const timeline = Array.from(timelineMap.values());
 
         return NextResponse.json({
             success: true,
-            timeline
+            timeline: Array.from(timelineMap.values()),
+            socialProfileId: ctx.socialProfile.id,
+            selectedHandle: ctx.socialProfile.handle,
         });
-
-    } catch (error: any) {
-        console.error('API Error fetching timeline:', error);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Erro interno.';
+        console.error('API Error fetching timeline:', message);
         return NextResponse.json({ error: 'Erro interno ao buscar timeline.' }, { status: 500 });
     }
 }

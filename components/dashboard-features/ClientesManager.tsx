@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Plus, User, Building, ExternalLink, Settings2, MoreVertical, Database, X, Save, Eye, Edit2, Trash2, Mail, Layers, MessageCircle, Instagram } from "lucide-react";
+import { cleanInstagramHandle } from '@/lib/instagram-handle';
 
 interface ClientesManagerProps {
     allUsers?: any[];
@@ -216,7 +217,7 @@ export function ClientesManager({ allUsers = [], userRole = 'CANDIDATO' }: Clien
                 payload.candidateId = turkUser.candidateProfile?.id;
                 payload.platform = 'INSTAGRAM';
                 if (turkForm.instagramHandle) {
-                    payload.profileUsername = turkForm.instagramHandle.replace('@', '');
+                    payload.profileUsername = cleanInstagramHandle(turkForm.instagramHandle);
                 }
                 const res = await fetch('/api/admin/metrics/instagram/deep', {
                     method: 'POST',
@@ -267,7 +268,7 @@ export function ClientesManager({ allUsers = [], userRole = 'CANDIDATO' }: Clien
                     posts: postsToSend
                 };
                 if (turkForm.instagramHandle) {
-                    payload.profileUsername = turkForm.instagramHandle.replace('@', '');
+                    payload.profileUsername = cleanInstagramHandle(turkForm.instagramHandle);
                 }
                 const res = await fetch('/api/admin/metrics/instagram/deep', {
                     method: 'POST',
@@ -301,7 +302,7 @@ export function ClientesManager({ allUsers = [], userRole = 'CANDIDATO' }: Clien
                 };
                 
                 if (turkForm.platform === 'INSTAGRAM' && turkForm.instagramHandle) {
-                    payload.handle = turkForm.instagramHandle.replace('@', '');
+                    payload.handle = cleanInstagramHandle(turkForm.instagramHandle);
                 }
 
                 const res = await fetch(endpoint, {

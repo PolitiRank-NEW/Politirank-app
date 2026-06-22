@@ -1,15 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/app/lib/prisma';
-
-function csvEscape(val: string | number | null | undefined): string {
-    if (val === null || val === undefined) return '';
-    const s = String(val);
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return `"${s.replace(/"/g, '""')}"`;
-    }
-    return s;
-}
+import { buildMembersCsv } from '@/lib/whatsapp-export';
 
 export async function GET(req: Request) {
     try {
@@ -29,9 +21,9 @@ export async function GET(req: Request) {
             return NextResponse.json({ error: 'candidateId ou groupId é obrigatório.' }, { status: 400 });
         }
 
-        const where: any = {};
+        const where: { groupId?: string; group?: { candidateId: string } } = {};
         if (groupId) where.groupId = groupId;
-        else where.group = { candidateId };
+        else if (candidateId) where.group = { candidateId };
 
         const members = await prisma.whatsappGroupMember.findMany({
             where,
@@ -41,33 +33,7 @@ export async function GET(req: Request) {
             orderBy: [{ group: { name: 'asc' } }, { name: 'asc' }],
         });
 
-        const headers = [
-            'Liderança',
-            'Grupo',
-            'Nome',
-            'Telefone',
-            'Instagram',
-            'Facebook',
-            'Votos Enquete',
-            'IG Cruzado',
-            'IG Username Match',
-            'IG Score Interação',
-        ];
-
-        const rows = members.map((m) => [
-            m.group.lideranca?.name || '',
-            m.group.name,
-            m.name || '',
-            m.phone || '',
-            m.instagramHandle ? `@${m.instagramHandle}` : '',
-            m.facebookHandle ? `@${m.facebookHandle}` : '',
-            m.pollVotes,
-            m.igMatched ? 'Sim' : 'Não',
-            m.igUsername || '',
-            m.igInteractionScore ?? '',
-        ]);
-
-        const csv = [headers.join(','), ...rows.map((r) => r.map(csvEscape).join(','))].join('\n');
+        const csv = buildMembersCsv(members);
         const filename = groupId ? `whatsapp-grupo-${groupId}.csv` : `whatsapp-candidato-${candidateId}.csv`;
 
         return new NextResponse(csv, {
@@ -77,7 +43,8 @@ export async function GET(req: Request) {
                 'Content-Disposition': `attachment; filename="${filename}"`,
             },
         });
-    } catch (error: any) {
-        return NextResponse.json({ error: error.message || 'Erro interno.' }, { status: 500 });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Erro interno.';
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

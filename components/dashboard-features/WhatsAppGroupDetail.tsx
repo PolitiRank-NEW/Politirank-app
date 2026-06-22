@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     Dialog,
     DialogContent,
@@ -16,10 +16,15 @@ import {
     Trash2,
     Save,
     Download,
+    Upload,
+    FileSpreadsheet,
     User,
     CheckCircle2,
     XCircle,
 } from "lucide-react";
+import Papa from "papaparse";
+import { formatJoinedAt, formatPollVotesDetail } from "@/lib/whatsapp-export";
+import { parsePollVotesDetail } from "@/lib/whatsapp-csv-import";
 
 interface Member {
     id: string;
@@ -28,9 +33,15 @@ interface Member {
     instagramHandle?: string | null;
     facebookHandle?: string | null;
     pollVotes?: number;
+    pollVotesDetail?: unknown;
     igMatched?: boolean;
     igUsername?: string | null;
     igInteractionScore?: number | null;
+    fbMatched?: boolean;
+    fbUsername?: string | null;
+    fbInteractionScore?: number | null;
+    joinedAt?: string | null;
+    createdAt?: string;
 }
 
 interface GroupInfo {
@@ -68,6 +79,9 @@ export function WhatsAppGroupDetail({
         facebookHandle: "",
     });
     const [adding, setAdding] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [importResult, setImportResult] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const isSuperAdmin = userRole === "SUPER_ADMIN";
     const isAdmin = userRole === "ADMIN" || isSuperAdmin;
@@ -169,6 +183,60 @@ export function WhatsAppGroupDetail({
         window.open(`/api/whatsapp/export?groupId=${groupId}`, "_blank");
     }
 
+    function handleDownloadTemplate() {
+        if (!groupId) return;
+        window.open(`/api/whatsapp/groups/${groupId}/members/import`, "_blank");
+    }
+
+    function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file || !groupId || !canEdit) return;
+
+        setImportResult(null);
+        setError(null);
+
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: async (results) => {
+                const rows = results.data as Record<string, unknown>[];
+                if (rows.length === 0) {
+                    setError("O CSV está vazio ou sem linhas válidas.");
+                    return;
+                }
+
+                const confirmImport = window.confirm(
+                    `Importar ${rows.length} linha(s) para o grupo "${group?.name || ""}"?\n\nDuplicados (mesmo telefone ou nome) serão ignorados.\nUse "Exportar CSV" e reimporte com a coluna Grupo preenchida para atualizar registros existentes.`
+                );
+                if (!confirmImport) return;
+
+                setImporting(true);
+                try {
+                    const res = await fetch(`/api/whatsapp/groups/${groupId}/members/import`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ rows, skipDuplicates: true }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Erro na importação.");
+
+                    setImportResult(data.message || `${data.created} pessoas importadas.`);
+                    await fetchGroup();
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : "Erro na importação.";
+                    setError(message);
+                } finally {
+                    setImporting(false);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                }
+            },
+            error: (parseError: Error) => {
+                setError(`Erro ao ler CSV: ${parseError.message}`);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            },
+        });
+    }
+
     return (
         <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-950">
@@ -201,6 +269,40 @@ export function WhatsAppGroupDetail({
                 ) : (
                     <div className="space-y-6">
                         <div className="flex flex-wrap gap-2 justify-end">
+                            {canEdit && (
+                                <>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleDownloadTemplate}
+                                        className="gap-1.5"
+                                    >
+                                        <FileSpreadsheet className="w-4 h-4" />
+                                        Modelo CSV
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={importing}
+                                        className="gap-1.5"
+                                    >
+                                        {importing ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <Upload className="w-4 h-4" />
+                                        )}
+                                        Importar CSV
+                                    </Button>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept=".csv,text/csv"
+                                        className="hidden"
+                                        onChange={handleImportFileChange}
+                                    />
+                                </>
+                            )}
                             <Button
                                 variant="outline"
                                 size="sm"
@@ -211,6 +313,12 @@ export function WhatsAppGroupDetail({
                                 Exportar CSV
                             </Button>
                         </div>
+
+                        {importResult && (
+                            <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 rounded-lg px-3 py-2">
+                                {importResult}
+                            </div>
+                        )}
 
                         {canEdit && (
                             <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
@@ -254,6 +362,10 @@ export function WhatsAppGroupDetail({
                                         }
                                     />
                                 </div>
+                                <p className="text-xs text-slate-500">
+                                    Ou importe várias pessoas com CSV (Telefone, Nome, Data de Entrada,
+                                    Votos/Histórico Enquetes, Instagram, Facebook).
+                                </p>
                                 <Button
                                     size="sm"
                                     onClick={handleAddMember}
@@ -280,22 +392,28 @@ export function WhatsAppGroupDetail({
                                     <thead className="bg-slate-50 dark:bg-slate-900/50">
                                         <tr>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                                Telefone
+                                            </th>
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
                                                 Nome
                                             </th>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
-                                                Telefone
+                                                Entrada
                                             </th>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
                                                 Instagram
                                             </th>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                                Interações IG
+                                            </th>
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
                                                 Facebook
                                             </th>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
-                                                Votos Enquete
+                                                Interações FB
                                             </th>
                                             <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
-                                                IG Cruzado
+                                                Enquetes
                                             </th>
                                             {isAdmin && (
                                                 <th className="p-3 font-bold text-slate-600 dark:text-slate-400 w-20">
@@ -354,6 +472,7 @@ function MemberRow({
         instagramHandle: member.instagramHandle || "",
         facebookHandle: member.facebookHandle || "",
         pollVotes: member.pollVotes ?? 0,
+        pollHistory: formatPollVotesDetail(member.pollVotesDetail),
     });
 
     useEffect(() => {
@@ -363,39 +482,66 @@ function MemberRow({
             instagramHandle: member.instagramHandle || "",
             facebookHandle: member.facebookHandle || "",
             pollVotes: member.pollVotes ?? 0,
+            pollHistory: formatPollVotesDetail(member.pollVotesDetail),
         });
     }, [member]);
 
+    const memberPollHistory = formatPollVotesDetail(member.pollVotesDetail);
     const changed =
         draft.name !== (member.name || "") ||
         draft.phone !== (member.phone || "") ||
         draft.instagramHandle !== (member.instagramHandle || "") ||
         draft.facebookHandle !== (member.facebookHandle || "") ||
-        (isSuperAdmin && draft.pollVotes !== (member.pollVotes ?? 0));
+        (isSuperAdmin &&
+            (draft.pollVotes !== (member.pollVotes ?? 0) ||
+                draft.pollHistory !== memberPollHistory));
 
     if (!canEdit) {
+        const entrada = formatJoinedAt({
+            joinedAt: member.joinedAt ? new Date(member.joinedAt) : null,
+            createdAt: member.createdAt ? new Date(member.createdAt) : undefined,
+        });
+        const pollHistory = formatPollVotesDetail(member.pollVotesDetail);
+
         return (
             <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
+                <td className="p-3 font-mono text-xs">{member.phone || "—"}</td>
                 <td className="p-3">
                     <span className="flex items-center gap-1.5 font-medium">
                         <User className="w-3.5 h-3.5 text-slate-400" />
                         {member.name || "—"}
                     </span>
                 </td>
-                <td className="p-3">{member.phone || "—"}</td>
+                <td className="p-3 text-xs text-slate-500">{entrada || "—"}</td>
                 <td className="p-3">
                     {member.instagramHandle ? `@${member.instagramHandle}` : "—"}
                 </td>
                 <td className="p-3">
-                    {member.facebookHandle ? `@${member.facebookHandle}` : "—"}
-                </td>
-                <td className="p-3">{member.pollVotes ?? 0}</td>
-                <td className="p-3">
-                    <IgMatchBadge
+                    <SocialMatchBadge
                         matched={member.igMatched}
-                        username={member.igUsername}
+                        username={member.igUsername || member.instagramHandle}
                         score={member.igInteractionScore}
                     />
+                </td>
+                <td className="p-3">
+                    {member.facebookHandle ? `@${member.facebookHandle}` : "—"}
+                </td>
+                <td className="p-3">
+                    <SocialMatchBadge
+                        matched={member.fbMatched}
+                        username={member.fbUsername || member.facebookHandle}
+                        score={member.fbInteractionScore}
+                    />
+                </td>
+                <td className="p-3">
+                    <div className="text-xs">
+                        <span className="font-semibold">{member.pollVotes ?? 0}</span>
+                        {pollHistory && (
+                            <p className="text-[10px] text-slate-400 mt-0.5 max-w-[180px] truncate" title={pollHistory}>
+                                {pollHistory}
+                            </p>
+                        )}
+                    </div>
                 </td>
             </tr>
         );
@@ -405,19 +551,25 @@ function MemberRow({
         <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
             <td className="p-2">
                 <Input
+                    className="h-8 text-sm font-mono"
+                    value={draft.phone}
+                    onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+                    placeholder="Telefone"
+                />
+            </td>
+            <td className="p-2">
+                <Input
                     className="h-8 text-sm"
                     value={draft.name}
                     onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                     placeholder="Nome"
                 />
             </td>
-            <td className="p-2">
-                <Input
-                    className="h-8 text-sm"
-                    value={draft.phone}
-                    onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
-                    placeholder="Telefone"
-                />
+            <td className="p-2 text-xs text-slate-500">
+                {formatJoinedAt({
+                    joinedAt: member.joinedAt ? new Date(member.joinedAt) : null,
+                    createdAt: member.createdAt ? new Date(member.createdAt) : undefined,
+                }) || "—"}
             </td>
             <td className="p-2">
                 <Input
@@ -427,6 +579,13 @@ function MemberRow({
                         setDraft((d) => ({ ...d, instagramHandle: e.target.value }))
                     }
                     placeholder="@ig"
+                />
+            </td>
+            <td className="p-2">
+                <SocialMatchBadge
+                    matched={member.igMatched}
+                    username={member.igUsername || member.instagramHandle}
+                    score={member.igInteractionScore}
                 />
             </td>
             <td className="p-2">
@@ -440,44 +599,70 @@ function MemberRow({
                 />
             </td>
             <td className="p-2">
-                {isSuperAdmin ? (
-                    <Input
-                        className="h-8 text-sm w-20"
-                        type="number"
-                        min={0}
-                        value={draft.pollVotes}
-                        onChange={(e) =>
-                            setDraft((d) => ({
-                                ...d,
-                                pollVotes: parseInt(e.target.value, 10) || 0,
-                            }))
-                        }
-                    />
-                ) : (
-                    <span className="text-slate-500 pl-2">{member.pollVotes ?? 0}</span>
-                )}
+                <SocialMatchBadge
+                    matched={member.fbMatched}
+                    username={member.fbUsername || member.facebookHandle}
+                    score={member.fbInteractionScore}
+                />
             </td>
             <td className="p-2">
-                <IgMatchBadge
-                    matched={member.igMatched}
-                    username={member.igUsername}
-                    score={member.igInteractionScore}
-                />
+                {isSuperAdmin ? (
+                    <div className="space-y-1">
+                        <Input
+                            className="h-8 text-sm w-16"
+                            type="number"
+                            min={0}
+                            value={draft.pollVotes}
+                            onChange={(e) =>
+                                setDraft((d) => ({
+                                    ...d,
+                                    pollVotes: parseInt(e.target.value, 10) || 0,
+                                }))
+                            }
+                        />
+                        <Input
+                            className="h-8 text-[10px]"
+                            value={draft.pollHistory}
+                            onChange={(e) =>
+                                setDraft((d) => ({ ...d, pollHistory: e.target.value }))
+                            }
+                            placeholder="Enquete → Opção"
+                            title='Ex: Enquete 1 → Sim | Enquete 2 → Não'
+                        />
+                    </div>
+                ) : (
+                    <div className="text-xs pl-1">
+                        <span>{member.pollVotes ?? 0}</span>
+                        {formatPollVotesDetail(member.pollVotesDetail) && (
+                            <p className="text-[10px] text-slate-400 truncate max-w-[120px]">
+                                {formatPollVotesDetail(member.pollVotesDetail)}
+                            </p>
+                        )}
+                    </div>
+                )}
             </td>
             {isAdmin && (
                 <td className="p-2">
                     <div className="flex items-center gap-1">
                         {changed && (
                             <button
-                                onClick={() =>
+                                onClick={() => {
+                                    const pollVotesDetail = isSuperAdmin
+                                        ? parsePollVotesDetail(draft.pollHistory)
+                                        : undefined;
                                     onSave(member.id, {
                                         name: draft.name,
                                         phone: draft.phone,
                                         instagramHandle: draft.instagramHandle,
                                         facebookHandle: draft.facebookHandle,
-                                        ...(isSuperAdmin ? { pollVotes: draft.pollVotes } : {}),
-                                    })
-                                }
+                                        ...(isSuperAdmin
+                                            ? {
+                                                  pollVotes: draft.pollVotes,
+                                                  pollVotesDetail: pollVotesDetail || [],
+                                              }
+                                            : {}),
+                                    });
+                                }}
                                 disabled={saving}
                                 className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
                                 title="Salvar"
@@ -504,7 +689,7 @@ function MemberRow({
     );
 }
 
-function IgMatchBadge({
+function SocialMatchBadge({
     matched,
     username,
     score,
