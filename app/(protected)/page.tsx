@@ -288,6 +288,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           allUsers={allUsers}
           viewAsUserId={viewAsId || undefined}
           candidateProfileId={profile?.id}
+          evolutionInstanceName={profile?.evolutionInstanceName}
         />
       </div>
     );

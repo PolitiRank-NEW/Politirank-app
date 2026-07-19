@@ -23,8 +23,14 @@ import {
     XCircle,
 } from "lucide-react";
 import Papa from "papaparse";
-import { formatJoinedAt, formatPollVotesDetail } from "@/lib/whatsapp-export";
+import {
+    formatJoinedAt,
+    formatPollVotesDetail,
+    getPollVoteEntries,
+    type PollVoteEntry,
+} from "@/lib/whatsapp-export";
 import { parsePollVotesDetail } from "@/lib/whatsapp-csv-import";
+import { WhatsAppScanPanel } from "./WhatsAppScanPanel";
 
 interface Member {
     id: string;
@@ -47,8 +53,10 @@ interface Member {
 interface GroupInfo {
     id: string;
     name: string;
+    candidateId?: string;
     liderancaName?: string;
     currentMembers?: number;
+    isSource?: boolean;
 }
 
 interface WhatsAppGroupDetailProps {
@@ -98,8 +106,10 @@ export function WhatsAppGroupDetail({
             setGroup({
                 id: data.group.id,
                 name: data.group.name,
+                candidateId: data.group.candidateId,
                 liderancaName: data.group.liderancaName || data.group.lideranca?.name,
                 currentMembers: data.group.currentMembers,
+                isSource: Boolean(data.group.isSource),
             });
             setMembers(data.group.members || []);
         } catch (err: any) {
@@ -239,7 +249,7 @@ export function WhatsAppGroupDetail({
 
     return (
         <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-950">
+            <DialogContent className="max-w-6xl w-[min(96vw,72rem)] max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-950">
                 <DialogHeader>
                     <DialogTitle className="text-xl font-bold text-slate-900 dark:text-white">
                         {group?.name || "Detalhes do Grupo"}
@@ -320,6 +330,16 @@ export function WhatsAppGroupDetail({
                             </div>
                         )}
 
+                        {group?.candidateId && groupId && (
+                            <WhatsAppScanPanel
+                                candidateId={group.candidateId}
+                                groupId={groupId}
+                                canEdit={canEdit}
+                                isSourceGroup={Boolean(group.isSource)}
+                                onSourceChanged={fetchGroup}
+                            />
+                        )}
+
                         {canEdit && (
                             <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                                 <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
@@ -388,35 +408,35 @@ export function WhatsAppGroupDetail({
                             </div>
                         ) : (
                             <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-                                <table className="w-full text-sm">
+                                <table className="w-full min-w-[960px] text-sm table-fixed">
                                     <thead className="bg-slate-50 dark:bg-slate-900/50">
                                         <tr>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[160px]">
                                                 Telefone
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[160px]">
                                                 Nome
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[88px]">
                                                 Entrada
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[140px]">
                                                 Instagram
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[100px]">
                                                 Interações IG
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[140px]">
                                                 Facebook
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 w-[100px]">
                                                 Interações FB
                                             </th>
-                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400">
+                                            <th className="text-left p-3 font-bold text-slate-600 dark:text-slate-400 min-w-[200px]">
                                                 Enquetes
                                             </th>
                                             {isAdmin && (
-                                                <th className="p-3 font-bold text-slate-600 dark:text-slate-400 w-20">
+                                                <th className="p-3 font-bold text-slate-600 dark:text-slate-400 w-16">
                                                     Ações
                                                 </th>
                                             )}
@@ -501,19 +521,19 @@ function MemberRow({
             joinedAt: member.joinedAt ? new Date(member.joinedAt) : null,
             createdAt: member.createdAt ? new Date(member.createdAt) : undefined,
         });
-        const pollHistory = formatPollVotesDetail(member.pollVotesDetail);
-
         return (
             <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                <td className="p-3 font-mono text-xs">{member.phone || "—"}</td>
+                <td className="p-3 font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis">
+                    {member.phone || "—"}
+                </td>
                 <td className="p-3">
-                    <span className="flex items-center gap-1.5 font-medium">
-                        <User className="w-3.5 h-3.5 text-slate-400" />
-                        {member.name || "—"}
+                    <span className="flex items-center gap-1.5 font-medium break-words">
+                        <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="min-w-0 break-words">{member.name || "—"}</span>
                     </span>
                 </td>
-                <td className="p-3 text-xs text-slate-500">{entrada || "—"}</td>
-                <td className="p-3">
+                <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{entrada || "—"}</td>
+                <td className="p-3 break-all">
                     {member.instagramHandle ? `@${member.instagramHandle}` : "—"}
                 </td>
                 <td className="p-3">
@@ -523,7 +543,7 @@ function MemberRow({
                         score={member.igInteractionScore}
                     />
                 </td>
-                <td className="p-3">
+                <td className="p-3 break-all">
                     {member.facebookHandle ? `@${member.facebookHandle}` : "—"}
                 </td>
                 <td className="p-3">
@@ -533,15 +553,11 @@ function MemberRow({
                         score={member.fbInteractionScore}
                     />
                 </td>
-                <td className="p-3">
-                    <div className="text-xs">
-                        <span className="font-semibold">{member.pollVotes ?? 0}</span>
-                        {pollHistory && (
-                            <p className="text-[10px] text-slate-400 mt-0.5 max-w-[180px] truncate" title={pollHistory}>
-                                {pollHistory}
-                            </p>
-                        )}
-                    </div>
+                <td className="p-3 align-top">
+                    <PollVotesDisplay
+                        detail={member.pollVotesDetail}
+                        count={member.pollVotes ?? 0}
+                    />
                 </td>
             </tr>
         );
@@ -549,65 +565,65 @@ function MemberRow({
 
     return (
         <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <Input
-                    className="h-8 text-sm font-mono"
+                    className="h-8 text-sm font-mono w-full min-w-0"
                     value={draft.phone}
                     onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
                     placeholder="Telefone"
                 />
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <Input
-                    className="h-8 text-sm"
+                    className="h-8 text-sm w-full min-w-0"
                     value={draft.name}
                     onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                     placeholder="Nome"
                 />
             </td>
-            <td className="p-2 text-xs text-slate-500">
+            <td className="p-2 text-xs text-slate-500 whitespace-nowrap align-top">
                 {formatJoinedAt({
                     joinedAt: member.joinedAt ? new Date(member.joinedAt) : null,
                     createdAt: member.createdAt ? new Date(member.createdAt) : undefined,
                 }) || "—"}
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <Input
-                    className="h-8 text-sm"
+                    className="h-8 text-sm w-full min-w-0"
                     value={draft.instagramHandle}
                     onChange={(e) =>
                         setDraft((d) => ({ ...d, instagramHandle: e.target.value }))
                     }
-                    placeholder="@ig"
+                    placeholder="@instagram"
                 />
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <SocialMatchBadge
                     matched={member.igMatched}
                     username={member.igUsername || member.instagramHandle}
                     score={member.igInteractionScore}
                 />
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <Input
-                    className="h-8 text-sm"
+                    className="h-8 text-sm w-full min-w-0"
                     value={draft.facebookHandle}
                     onChange={(e) =>
                         setDraft((d) => ({ ...d, facebookHandle: e.target.value }))
                     }
-                    placeholder="@fb"
+                    placeholder="@facebook"
                 />
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top">
                 <SocialMatchBadge
                     matched={member.fbMatched}
                     username={member.fbUsername || member.facebookHandle}
                     score={member.fbInteractionScore}
                 />
             </td>
-            <td className="p-2">
+            <td className="p-2 align-top min-w-[200px]">
                 {isSuperAdmin ? (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                         <Input
                             className="h-8 text-sm w-16"
                             type="number"
@@ -621,7 +637,7 @@ function MemberRow({
                             }
                         />
                         <Input
-                            className="h-8 text-[10px]"
+                            className="h-auto min-h-8 text-xs py-1.5"
                             value={draft.pollHistory}
                             onChange={(e) =>
                                 setDraft((d) => ({ ...d, pollHistory: e.target.value }))
@@ -629,16 +645,17 @@ function MemberRow({
                             placeholder="Enquete → Opção"
                             title='Ex: Enquete 1 → Sim | Enquete 2 → Não'
                         />
+                        <PollVotesDisplay
+                            detail={member.pollVotesDetail}
+                            count={member.pollVotes ?? 0}
+                            compact
+                        />
                     </div>
                 ) : (
-                    <div className="text-xs pl-1">
-                        <span>{member.pollVotes ?? 0}</span>
-                        {formatPollVotesDetail(member.pollVotesDetail) && (
-                            <p className="text-[10px] text-slate-400 truncate max-w-[120px]">
-                                {formatPollVotesDetail(member.pollVotesDetail)}
-                            </p>
-                        )}
-                    </div>
+                    <PollVotesDisplay
+                        detail={member.pollVotesDetail}
+                        count={member.pollVotes ?? 0}
+                    />
                 )}
             </td>
             {isAdmin && (
@@ -686,6 +703,51 @@ function MemberRow({
                 </td>
             )}
         </tr>
+    );
+}
+
+function PollVotesDisplay({
+    detail,
+    count = 0,
+    compact = false,
+}: {
+    detail: unknown;
+    count?: number;
+    compact?: boolean;
+}) {
+    const entries = getPollVoteEntries(detail);
+
+    if (entries.length === 0 && count === 0) {
+        return <span className="text-xs text-slate-400">—</span>;
+    }
+
+    return (
+        <div className={`flex flex-col ${compact ? "gap-1" : "gap-1.5"} min-w-[160px] max-w-[min(100%,320px)]`}>
+            {count > 0 && entries.length === 0 && (
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    {count} {count === 1 ? "voto" : "votos"}
+                </span>
+            )}
+            {entries.map((entry, index) => (
+                <PollVoteCard key={entry.pollId || `${entry.pollTitle}-${index}`} entry={entry} />
+            ))}
+        </div>
+    );
+}
+
+function PollVoteCard({ entry }: { entry: PollVoteEntry }) {
+    const title = entry.pollTitle?.trim() || "Enquete";
+    const option = entry.option?.trim() || "?";
+
+    return (
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 px-2.5 py-2 text-xs leading-snug">
+            <p className="font-medium text-slate-700 dark:text-slate-200 whitespace-normal break-words">
+                {title}
+            </p>
+            <p className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400 whitespace-normal break-words">
+                → {option}
+            </p>
+        </div>
     );
 }
 

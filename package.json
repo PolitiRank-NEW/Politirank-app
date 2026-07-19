@@ -7,7 +7,13 @@
     "build": "npx prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "seed:whatsapp": "npx tsx scripts/seed-whatsapp-mock.ts"
+    "seed:whatsapp": "npx tsx scripts/seed-whatsapp-mock.ts",
+    "evolution:up": "docker compose -f docker/evolution/docker-compose.yml up -d",
+    "evolution:down": "docker compose -f docker/evolution/docker-compose.yml down",
+    "evolution:logs": "docker compose -f docker/evolution/docker-compose.yml logs -f evolution-api",
+    "evolution:prod:up": "docker compose -f docker/evolution/docker-compose.prod.yml --env-file docker/evolution/.env.production up -d",
+    "evolution:prod:down": "docker compose -f docker/evolution/docker-compose.prod.yml --env-file docker/evolution/.env.production down",
+    "evolution:prod:logs": "docker compose -f docker/evolution/docker-compose.prod.yml logs -f evolution-api"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",

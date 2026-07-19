@@ -1,0 +1,14 @@
+{
+  "webhook": {
+    "enabled": true,
+    "url": "http://host.docker.internal:3000/api/webhooks/whatsapp/evolution",
+    "webhookByEvents": false,
+    "webhookBase64": false,
+    "events": [
+      "MESSAGES_UPSERT",
+      "CONNECTION_UPDATE",
+      "GROUPS_UPSERT",
+      "GROUP_PARTICIPANTS_UPDATE"
+    ]
+  }
+}

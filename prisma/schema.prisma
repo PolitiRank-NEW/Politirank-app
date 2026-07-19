@@ -88,6 +88,8 @@ model CandidateProfile {
   whatsappLiderancaIds String[] @db.ObjectId
   whatsappLiderancas   WhatsappLideranca[] @relation(fields: [whatsappLiderancaIds], references: [id])
   whatsappGroups       WhatsappGroup[]
+  whatsappScanTasks   WhatsappScanTask[]
+  whatsappSourcePosts WhatsappSourcePost[]
 }
 enum SocialPlatform {
   INSTAGRAM
@@ -312,14 +314,22 @@ model WhatsappGroup {
 
   // Link for evolution api/etc
   groupId          String?  
+
+  // Grupo Source: origem do conteúdo que deve ser republicado nos demais
+  isSource         Boolean  @default(false)
   
   isManual         Boolean  @default(false)
   lastUpdate       DateTime @default(now())
 
   members          WhatsappGroupMember[]
+  scanTasks        WhatsappScanTask[]
+  scanHits         WhatsappScanHit[]
+  sourcePosts      WhatsappSourcePost[]
+  sourceMatches    WhatsappSourceMatch[]
   
   @@index([candidateId])
   @@index([liderancaId])
+  @@index([candidateId, isSource])
 }
 
 model WhatsappGroupMember {
@@ -329,6 +339,8 @@ model WhatsappGroupMember {
 
   name             String?
   phone            String?
+  // LID interno do WhatsApp (ex.: 77412524134598) — usado para cruzar votos de enquete
+  waLid            String?
   instagramHandle  String?
   facebookHandle   String?
 
@@ -356,4 +368,118 @@ model WhatsappGroupMember {
 
   @@index([groupId])
   @@index([instagramHandle])
+  @@index([waLid])
+}
+
+// ----------------------------------------------------------------------------
+// SCANNER WHATSAPP: tarefas de legenda + hits (imagem postada com caption)
+// Celular dedicado só nos grupos de scan; webhook casa caption com a tarefa.
+// ----------------------------------------------------------------------------
+
+model WhatsappScanTask {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId      String   @db.ObjectId
+  candidate        CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  // null = qualquer grupo já sincronizado/monitorado deste candidato
+  groupId          String?  @db.ObjectId
+  group            WhatsappGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  title            String?
+  expectedCaption  String
+  // Telefones que devem postar (só dígitos). Vazio = usa membros do grupo com telefone.
+  expectedPhones   String[] @default([])
+  // CONTAINS = caption normalizada contém expected; EXACT = igualdade após normalizar
+  matchMode        String   @default("CONTAINS")
+  requireMedia     Boolean  @default(true)
+  status           String   @default("OPEN") // OPEN | CLOSED
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  hits             WhatsappScanHit[]
+
+  @@index([candidateId, status])
+  @@index([groupId])
+}
+
+model WhatsappScanHit {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  taskId           String   @db.ObjectId
+  task             WhatsappScanTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  groupId          String   @db.ObjectId
+  group            WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  memberId         String?  @db.ObjectId
+  waLid            String?
+  phone            String?
+  pushName         String?
+
+  captionFound     String
+  hasMedia         Boolean  @default(false)
+  mediaType        String?  // image | video | document | none
+  messageId        String
+
+  matchedAt        DateTime @default(now())
+
+  @@unique([taskId, messageId])
+  @@index([groupId])
+  @@index([taskId])
+}
+
+// ----------------------------------------------------------------------------
+// SCANNER SOURCE: conteúdo nasce no grupo Source e é buscado nos demais grupos
+// ----------------------------------------------------------------------------
+
+model WhatsappSourcePost {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId      String   @db.ObjectId
+  candidate        CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  groupId          String   @db.ObjectId
+  group            WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  messageId        String
+  caption          String
+  hasMedia         Boolean  @default(false)
+  mediaType        String?
+  pushName         String?
+  phone            String?
+  waLid            String?
+  memberId         String?
+
+  postedAt         DateTime @default(now())
+  // OPEN = ainda em monitoramento; CLOSED = arquivado
+  status           String   @default("OPEN")
+
+  matches          WhatsappSourceMatch[]
+
+  @@unique([groupId, messageId])
+  @@index([candidateId, status, postedAt])
+  @@index([groupId])
+}
+
+model WhatsappSourceMatch {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  sourcePostId     String   @db.ObjectId
+  sourcePost       WhatsappSourcePost @relation(fields: [sourcePostId], references: [id], onDelete: Cascade)
+
+  groupId          String   @db.ObjectId
+  group            WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  messageId        String
+  captionFound     String
+  hasMedia         Boolean  @default(false)
+  mediaType        String?
+  memberId         String?
+  phone            String?
+  waLid            String?
+  pushName         String?
+
+  matchedAt        DateTime @default(now())
+
+  @@unique([sourcePostId, groupId, messageId])
+  @@index([groupId])
+  @@index([sourcePostId])
+  @@index([phone])
 }

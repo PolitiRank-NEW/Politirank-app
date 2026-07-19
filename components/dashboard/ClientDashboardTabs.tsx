@@ -24,6 +24,7 @@ interface ClientDashboardTabsProps {
     whatsappMessages?: number;
     whatsappLiderancas?: any[];
     candidateProfileId?: string;
+    evolutionInstanceName?: string | null;
 }
 
 export function ClientDashboardTabs({
@@ -40,6 +41,7 @@ export function ClientDashboardTabs({
     allUsers = [],
     viewAsUserId,
     candidateProfileId,
+    evolutionInstanceName,
 }: ClientDashboardTabsProps) {
     const [activeTab, setActiveTab] = useState<TabValue>("painel");
 
@@ -151,6 +153,7 @@ export function ClientDashboardTabs({
                         liderancas={whatsappLiderancas}
                         userRole={userRole}
                         candidateProfileId={candidateProfileId}
+                        evolutionInstanceName={evolutionInstanceName}
                     />
                 )}
 

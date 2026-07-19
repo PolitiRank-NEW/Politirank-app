@@ -1,8 +1,8 @@
-import { useState, useRef } from "react";
-import { MessageCircle, Database, Users, TrendingUp, Info, Activity, UserPlus, UserMinus, FileDigit, BarChart, User, LayoutGrid, LayoutList, Sprout, Loader2, CheckCircle, AlertCircle, Download, Upload, FileSpreadsheet, GitMerge, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useMemo, useState } from "react";
+import { MessageCircle, Users, TrendingUp, Info, Activity, UserPlus, UserMinus, FileDigit, BarChart, User, LayoutGrid, LayoutList, Sprout, Loader2, CheckCircle, AlertCircle, ChevronRight, ScanSearch, Search, Star } from "lucide-react";
 import { WhatsAppGroupDetail } from "./WhatsAppGroupDetail";
-import Papa from "papaparse";
+import { WhatsAppConnect } from "./WhatsAppConnect";
+import { WhatsAppSourceScannerDialog } from "./WhatsAppSourceScannerDialog";
 
 interface WhatsAppTrackerProps {
     hasWhatsapp?: boolean;
@@ -10,22 +10,32 @@ interface WhatsAppTrackerProps {
     liderancas?: any[];
     userRole?: string;
     candidateProfileId?: string;
+    evolutionInstanceName?: string | null;
 }
 
-export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas = [], userRole, candidateProfileId }: WhatsAppTrackerProps) {
+export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas = [], userRole, candidateProfileId, evolutionInstanceName }: WhatsAppTrackerProps) {
     const [viewMode, setViewMode] = useState<'detailed' | 'compact'>('detailed');
     const [seedLoading, setSeedLoading] = useState(false);
     const [seedResult, setSeedResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
     const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-    const [crossLoading, setCrossLoading] = useState(false);
-    const [crossResult, setCrossResult] = useState<string | null>(null);
-    const [importing, setImporting] = useState(false);
-    const [importResult, setImportResult] = useState<string | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [groupFilter, setGroupFilter] = useState("");
+    const [scannerOpen, setScannerOpen] = useState(false);
 
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
     const canSeed = isAdmin && !!candidateProfileId;
-    const canCrossRef = isAdmin && !!candidateProfileId;
+
+    const filteredLiderancas = useMemo(() => {
+        const q = groupFilter.trim().toLowerCase();
+        if (!q) return liderancas;
+        return liderancas
+            .map((lideranca: any) => {
+                const groups = (lideranca.groups || []).filter((g: any) =>
+                    String(g.name || "").toLowerCase().includes(q)
+                );
+                return { ...lideranca, groups };
+            })
+            .filter((lideranca: any) => (lideranca.groups || []).length > 0);
+    }, [liderancas, groupFilter]);
 
     async function handleSeedData() {
         if (!candidateProfileId) return;
@@ -49,85 +59,6 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
         } finally {
             setSeedLoading(false);
         }
-    }
-
-    async function handleCrossReference() {
-        if (!candidateProfileId) return;
-        setCrossLoading(true);
-        setCrossResult(null);
-        try {
-            const res = await fetch('/api/whatsapp/cross-reference', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ candidateId: candidateProfileId }),
-            });
-            const data = await res.json();
-            if (res.ok && data.success) {
-                setCrossResult(data.message);
-                setTimeout(() => window.location.reload(), 2000);
-            } else {
-                setCrossResult(data.error || 'Erro no cruzamento.');
-            }
-        } catch (err: any) {
-            setCrossResult(err.message || 'Erro de conexão.');
-        } finally {
-            setCrossLoading(false);
-        }
-    }
-
-    function handleExportCsv() {
-        if (!candidateProfileId) return;
-        window.open(`/api/whatsapp/export?candidateId=${candidateProfileId}`, '_blank');
-    }
-
-    function handleDownloadTemplate() {
-        window.open('/api/whatsapp/import', '_blank');
-    }
-
-    function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-        const file = e.target.files?.[0];
-        if (!file || !candidateProfileId || !isAdmin) return;
-
-        setImportResult(null);
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            complete: async (results) => {
-                const rows = results.data as Record<string, unknown>[];
-                if (rows.length === 0) {
-                    setImportResult('CSV vazio ou sem linhas válidas.');
-                    return;
-                }
-
-                const confirmImport = window.confirm(
-                    `Importar ${rows.length} pessoa(s) para os grupos do candidato?\n\nA coluna "Grupo" deve corresponder ao nome do grupo.\nDuplicados serão ignorados.`
-                );
-                if (!confirmImport) return;
-
-                setImporting(true);
-                try {
-                    const res = await fetch('/api/whatsapp/import', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ candidateId: candidateProfileId, rows, skipDuplicates: true }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || 'Erro na importação.');
-                    setImportResult(data.message);
-                    setTimeout(() => window.location.reload(), 2000);
-                } catch (err: unknown) {
-                    const message = err instanceof Error ? err.message : 'Erro na importação.';
-                    setImportResult(message);
-                } finally {
-                    setImporting(false);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                }
-            },
-            error: (parseError: Error) => {
-                setImportResult(`Erro ao ler CSV: ${parseError.message}`);
-                if (fileInputRef.current) fileInputRef.current.value = '';
-            },
-        });
     }
 
     const readOnly = userRole === 'CANDIDATO';
@@ -181,67 +112,34 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
         return (
             <>
             <div className="space-y-8">
+                {candidateProfileId && (
+                    <WhatsAppConnect
+                        candidateProfileId={candidateProfileId}
+                        evolutionInstanceName={evolutionInstanceName}
+                        userRole={userRole}
+                        compact
+                    />
+                )}
+
                 {/* 1. INSTÂNCIA MAIOR: CANDIDATO (Dados Globais) */}
                 <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                         <div>
                             <h2 className="text-[1.35rem] font-bold text-slate-900 dark:text-white leading-tight flex items-center gap-2">
                                 Rastreador do WhatsApp
-                                {isAdmin && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-[11px] font-bold rounded-full border border-amber-200 dark:border-amber-800">
-                                        <Database className="w-3 h-3" />
-                                        Dados Manuais
-                                    </span>
-                                )}
                             </h2>
                             <p className="text-[15px] font-medium text-slate-500">Visão Geral do Candidato (Soma de todas as instâncias)</p>
                         </div>
 
-                        {/* Botões de ação — admins */}
-                        {isAdmin && candidateProfileId && (
+                        {candidateProfileId && (
                             <div className="flex flex-wrap items-center gap-2">
                                 <button
-                                    onClick={handleDownloadTemplate}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-all shadow-sm"
+                                    onClick={() => setScannerOpen(true)}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:hover:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-all shadow-sm"
                                 >
-                                    <FileSpreadsheet className="w-4 h-4" />
-                                    Modelo CSV
+                                    <ScanSearch className="w-4 h-4" />
+                                    Scanner de conteúdos
                                 </button>
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={importing}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 transition-all disabled:opacity-60 shadow-sm"
-                                >
-                                    {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                                    Importar CSV
-                                </button>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept=".csv,text/csv"
-                                    className="hidden"
-                                    onChange={handleImportFileChange}
-                                />
-                                <button
-                                    onClick={handleExportCsv}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-all shadow-sm"
-                                >
-                                    <Download className="w-4 h-4" />
-                                    Exportar CSV
-                                </button>
-                                <button
-                                    onClick={handleCrossReference}
-                                    disabled={crossLoading}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 transition-all disabled:opacity-60 shadow-sm"
-                                >
-                                    {crossLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitMerge className="w-4 h-4" />}
-                                    Cruzar IG/FB
-                                </button>
-                                {(crossResult || importResult) && (
-                                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                                        {importResult || crossResult}
-                                    </span>
-                                )}
                             </div>
                         )}
 
@@ -316,7 +214,18 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                 </div>
                             </div>
                             
-                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                                <div className="relative flex-1 sm:w-64">
+                                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="search"
+                                        value={groupFilter}
+                                        onChange={(e) => setGroupFilter(e.target.value)}
+                                        placeholder="Buscar grupo…"
+                                        className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder:text-slate-400"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
                                 <button 
                                     onClick={() => setViewMode('detailed')}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'detailed' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm ring-1 ring-slate-200/50 dark:ring-slate-600' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
@@ -331,11 +240,28 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                     <LayoutList className="w-3.5 h-3.5" />
                                     Compacto
                                 </button>
+                                </div>
                             </div>
                         </div>
 
+                        {groupFilter.trim() && (
+                            <p className="text-xs text-slate-500 -mt-2">
+                                Mostrando grupos que contêm “{groupFilter.trim()}” (
+                                {filteredLiderancas.reduce(
+                                    (n: number, l: any) => n + (l.groups?.length || 0),
+                                    0
+                                )}{" "}
+                                grupo(s))
+                            </p>
+                        )}
+
                         <div className="space-y-8">
-                            {liderancas.map((lideranca) => {
+                            {filteredLiderancas.length === 0 && groupFilter.trim() ? (
+                                <div className="text-center py-10 text-sm text-slate-500 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl">
+                                    Nenhum grupo encontrado com “{groupFilter.trim()}”.
+                                </div>
+                            ) : null}
+                            {filteredLiderancas.map((lideranca) => {
                                 const hasGroups = lideranca.groups && lideranca.groups.length > 0;
                                 
                                 // Somatorios exclusivos desta liderança incuindo os grupos abaixo dela
@@ -437,6 +363,11 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                                                 <div className="flex items-center gap-2">
                                                                                     <MessageCircle className="w-5 h-5 text-green-500 shrink-0" />
                                                                                     <h6 className="font-bold text-slate-800 dark:text-slate-100 truncate" title={g.name}>{g.name}</h6>
+                                                                                    {g.isSource && (
+                                                                                        <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 rounded shrink-0">
+                                                                                            <Star className="w-3 h-3" /> Source
+                                                                                        </span>
+                                                                                    )}
                                                                                     <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-colors shrink-0" />
                                                                                 </div>
                                                                                 {g.groupLeaderName && (
@@ -528,6 +459,11 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                                             <div className="min-w-0">
                                                                                 <h6 className="font-bold text-sm text-slate-800 dark:text-slate-100 truncate flex items-center gap-1">
                                                                                     {g.name}
+                                                                                    {g.isSource && (
+                                                                                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 px-1 py-0.5 rounded shrink-0">
+                                                                                            <Star className="w-2.5 h-2.5" /> Source
+                                                                                        </span>
+                                                                                    )}
                                                                                     <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                                                                                     {g.groupLeaderName && <span className="text-xs font-normal text-slate-400 ml-2">({g.groupLeaderName})</span>}
                                                                                 </h6>
@@ -586,6 +522,16 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                 userRole={userRole}
                 readOnly={readOnly}
             />
+            {candidateProfileId && (
+                <WhatsAppSourceScannerDialog
+                    open={scannerOpen}
+                    onClose={() => setScannerOpen(false)}
+                    candidateId={candidateProfileId}
+                    onOpenGroup={(id) => setSelectedGroupId(id)}
+                    canExport
+                    canCrossReference={isAdmin}
+                />
+            )}
             </>
         );
     }
@@ -597,8 +543,17 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                 <MessageCircle className="w-8 h-8 text-green-500" strokeWidth={1.5} />
             </div>
             <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3">WhatsApp não conectado</h3>
-            <p className="text-slate-500 dark:text-slate-400 mb-4 max-w-md">Para monitorar grupos, lideranças e mensagens do WhatsApp, conecte a API oficial ou importe via painel do Turk.</p>
-            <p className="text-slate-400 dark:text-slate-500 mb-6 max-w-md text-sm">Administradores e Gerentes podem acessar <strong>Clientes</strong> e alimentar dados pela Inserção Manual Turker.</p>
+            <p className="text-slate-500 dark:text-slate-400 mb-6 max-w-md">Conecte via Evolution API (Docker local) ou importe dados manualmente pelo CSV / painel Turk.</p>
+
+            {candidateProfileId && (
+                <div className="mb-8 w-full flex justify-center">
+                    <WhatsAppConnect
+                        candidateProfileId={candidateProfileId}
+                        evolutionInstanceName={evolutionInstanceName}
+                        userRole={userRole}
+                    />
+                </div>
+            )}
 
             {/* Botão de seed para admins impersonando um candidato sem dados */}
             {canSeed && (
@@ -633,9 +588,6 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                 </div>
             )}
 
-            <Button className="bg-green-500 hover:bg-green-600 text-white font-bold py-2.5 px-6 rounded-xl transition-colors">
-                Conectar ao WhatsApp Oficial
-            </Button>
         </div>
     );
 }
