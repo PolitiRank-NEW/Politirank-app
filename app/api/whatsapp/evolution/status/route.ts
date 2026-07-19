@@ -26,16 +26,38 @@ export async function GET(req: Request) {
             });
         }
 
-        const data = await evolutionService.getConnectionState(instanceName);
-        const state = EvolutionService.extractConnectionState(data);
+        try {
+            const data = await evolutionService.getConnectionState(instanceName);
+            const state = EvolutionService.extractConnectionState(data);
 
-        return NextResponse.json({
-            success: true,
-            configured: true,
-            instanceName,
-            state,
-            connected: state === 'open',
-        });
+            return NextResponse.json({
+                success: true,
+                configured: true,
+                instanceName,
+                state,
+                connected: state === 'open',
+            });
+        } catch (stateError: unknown) {
+            const status = (stateError as { response?: { status?: number; data?: { message?: string | string[] } } })
+                ?.response?.status;
+            const body = (stateError as { response?: { data?: { message?: string | string[] } } })?.response?.data;
+            const msg = Array.isArray(body?.message)
+                ? body.message.join(' ')
+                : String(body?.message || (stateError instanceof Error ? stateError.message : ''));
+
+            // Nome no Mongo, mas instância ainda não criada na Evolution (VPS nova).
+            if (status === 404 || /does not exist|not found|não existe/i.test(msg)) {
+                return NextResponse.json({
+                    success: true,
+                    configured: true,
+                    instanceName,
+                    state: 'close',
+                    connected: false,
+                    needsCreateOnServer: true,
+                });
+            }
+            throw stateError;
+        }
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Erro interno.';
         return NextResponse.json({ error: message }, { status: 502 });

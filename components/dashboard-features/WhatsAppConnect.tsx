@@ -310,7 +310,7 @@ export function WhatsAppConnect({
                         Conexão Evolution API
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                        Gateway local (Docker :8080) — escaneie o QR no celular
+                        Evolution API (VPS Contabo) — escaneie o QR no celular
                     </p>
                 </div>
                 <span
