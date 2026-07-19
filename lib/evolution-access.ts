@@ -5,7 +5,6 @@ export async function assertCandidateEvolutionAccess(candidateId: string) {
     const session = await auth();
     // @ts-expect-error next-auth session extension
     const userRole = session?.user?.role as string | undefined;
-    // @ts-expect-error next-auth session extension
     const userId = session?.user?.id as string | undefined;
 
     if (!session || !userId) {
