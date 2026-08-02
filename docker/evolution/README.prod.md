@@ -119,6 +119,26 @@ No projeto Vercel → Settings → Environment Variables:
 
 Redeploy o app após salvar.
 
+### Timer horário (grupos + entradas/saídas)
+
+O webhook já cria grupo novo e registra entrada/saída em tempo real.
+O cron horário é um **safety net leve** (lista grupos; só busca membros onde o tamanho mudou).
+
+1. Na Vercel, adicione `CRON_SECRET` (chave longa aleatória) em Production.
+2. No Hobby, cron horário da Vercel pode não rodar — use a Contabo:
+
+```bash
+# na VPS
+cd /opt/politirank-evolution
+# copie cron-light-sync.sh e cron.env.example do repo
+cp cron.env.example cron.env
+nano cron.env   # CRON_SECRET=igual à Vercel  APP_URL=https://politirank-app.vercel.app
+chmod +x cron-light-sync.sh
+crontab -e
+# adicione:
+# 0 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
+```
+
 ---
 
 ## 7. Teste ponta a ponta

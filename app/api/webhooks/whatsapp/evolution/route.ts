@@ -7,10 +7,14 @@ import {
     matchAgainstSourcePosts,
     resolveGroupSender,
 } from '@/lib/whatsapp-source-scan';
+import {
+    handleGroupParticipantsUpdate,
+    handleGroupsUpsertOrUpdate,
+} from '@/lib/whatsapp-group-live-sync';
 
 /**
  * Evolution API Webhook Handler
- * Eventos tratados: messages.upsert (texto, enquetes, votos, Scanner de legendas)
+ * Eventos: messages.upsert, groups.upsert/update, group.participants.update
  *
  * Observação sobre enquetes (polls):
  * - O voto chega em message.pollUpdateMessage e normalmente vem CRIPTOGRAFADO (encPayload/encIv).
@@ -428,6 +432,46 @@ export async function POST(req: NextRequest) {
             normalizedEvent.includes('qrcode')
         ) {
             return NextResponse.json({ ignored: true, event: normalizedEvent, ok: true });
+        }
+
+        const instanceName = typeof instance === 'string' ? instance : '';
+        const profile = instanceName
+            ? await prisma.candidateProfile.findFirst({
+                  where: { evolutionInstanceName: instanceName },
+                  select: { id: true },
+              })
+            : null;
+
+        // Grupo criado / metadados atualizados → entra no PoliticRank na hora
+        if (
+            normalizedEvent === 'groups.upsert' ||
+            normalizedEvent === 'groups.update' ||
+            normalizedEvent.includes('groups.upsert') ||
+            normalizedEvent.includes('groups.update')
+        ) {
+            if (!profile) {
+                return NextResponse.json({ ignored: true, reason: 'instance not linked' });
+            }
+            const result = await handleGroupsUpsertOrUpdate(profile.id, data);
+            return NextResponse.json({ event: normalizedEvent, ...result });
+        }
+
+        // Entrada / saída de participantes (só aquele grupo)
+        if (
+            normalizedEvent === 'group.participants.update' ||
+            normalizedEvent.includes('group.participants')
+        ) {
+            if (!profile) {
+                return NextResponse.json({ ignored: true, reason: 'instance not linked' });
+            }
+            const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+            const result = await handleGroupParticipantsUpdate(profile.id, {
+                id: typeof payload.id === 'string' ? payload.id : undefined,
+                participants: payload.participants,
+                participantsData: payload.participantsData,
+                action: typeof payload.action === 'string' ? payload.action : undefined,
+            });
+            return NextResponse.json({ event: normalizedEvent, ...result });
         }
 
         if (normalizedEvent !== 'messages.upsert') {

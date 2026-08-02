@@ -310,7 +310,7 @@ export function WhatsAppConnect({
                         Conexão Evolution API
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                        Evolution API (VPS Contabo) — escaneie o QR no celular
+                        Evolution (Contabo) — grupos e entradas/saídas entram no webhook; sync leve a cada 1h
                     </p>
                 </div>
                 <span
@@ -377,8 +377,8 @@ export function WhatsAppConnect({
                         {syncing ? "Sincronizando…" : "Atualizar todos os grupos"}
                     </button>
                     <p className="text-[11px] text-slate-400">
-                        Primeiro aparecem todos os grupos; em seguida os membros entram em lotes
-                        (paralelo) para reduzir a espera.
+                        Use só se algo falhar. No dia a dia, grupos novos e entradas/saídas
+                        atualizam sozinhos (webhook + timer horário leve).
                     </p>
                 </div>
             )}
