@@ -96,7 +96,7 @@ export async function GET(req: Request) {
             status = status === 'critical' ? 'critical' : 'warning';
             issues.push(`${emptyMembers.length} grupo(s) sem membros cadastrados (sync ainda preenchendo)`);
         }
-        if (Math.abs(seatsDiff) > 50) {
+        if (Math.abs(seatsDiff) > 20) {
             status = status === 'critical' ? 'critical' : 'warning';
             issues.push(
                 `Diferença de ~${Math.abs(seatsDiff)} vagas entre WhatsApp (${evoSeats}) e app (${metrics.totalSeats})`
@@ -126,6 +126,7 @@ export async function GET(req: Request) {
                 groupsEmptyMembers: emptyMembers.length,
                 uniqueMembers: metrics.uniqueMembers,
                 duplicatePhones: metrics.duplicatePhones,
+                duplicateSeats: metrics.duplicateSeats,
                 totalSeats: metrics.totalSeats,
                 missingInApp: missingInApp.length,
                 extraInApp: extraInApp.length,

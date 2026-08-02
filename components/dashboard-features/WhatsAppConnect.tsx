@@ -24,6 +24,7 @@ type HealthReport = {
         groupsEmptyMembers: number;
         uniqueMembers: number;
         duplicatePhones: number;
+        duplicateSeats?: number;
         totalSeats: number;
         missingInApp: number;
     };
@@ -423,7 +424,8 @@ export function WhatsAppConnect({
                             <p className="font-mono text-[11px] opacity-90">
                                 Celular: {health.evolution.groups} grupos / {health.evolution.seats}{" "}
                                 vagas · App: {health.app.groups} grupos / {health.app.totalSeats}{" "}
-                                vagas · Únicos: {health.app.uniqueMembers} · Vazios:{" "}
+                                vagas · Únicos: {health.app.uniqueMembers} · Duplicados:{" "}
+                                {health.app.duplicatePhones} · Vazios:{" "}
                                 {health.app.groupsEmptyMembers}
                             </p>
                         )}
