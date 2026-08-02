@@ -20,6 +20,7 @@ function phoneKey(phone: string): string {
 export type GroupWithMemberPhones = {
     currentMembers?: number | null;
     entryCount?: number | null;
+    entryCountSync?: number | null;
     exitCount?: number | null;
     duplicateMembers?: number | null;
     _count?: { members?: number };
@@ -43,17 +44,22 @@ export function aggregateUniqueWhatsappMetrics(
     duplicateSeats: number;
     /** Soma bruta de vagas em todos os grupos */
     totalSeats: number;
+    /** Entradas reais (webhook) */
     entries: number;
+    /** Entradas do sync/catch-up */
+    entriesSync: number;
     exits: number;
 } {
     const phoneGroups = new Map<string, number>();
     let totalSeats = 0;
     let entries = 0;
+    let entriesSync = 0;
     let exits = 0;
 
     for (const g of groups) {
         totalSeats += groupMemberCount(g);
         entries += g.entryCount || 0;
+        entriesSync += g.entryCountSync || 0;
         exits += g.exitCount || 0;
 
         const members = Array.isArray(g.members) ? g.members : [];
@@ -84,6 +90,7 @@ export function aggregateUniqueWhatsappMetrics(
         duplicateSeats,
         totalSeats,
         entries,
+        entriesSync,
         exits,
     };
 }

@@ -11,6 +11,54 @@ export const AUTO_LIDERANCA_NAME = 'Grupos WhatsApp (Evolution)';
 /** Máx. de grupos com fetch de participantes por rodada do cron (protege Evolution). */
 export const CRON_MEMBER_RECONCILE_LIMIT = 50;
 
+/**
+ * Uma vez: move entryCount antigo → entryCountSync (catch-up virava “entradas”).
+ * Entradas novas reais ficam em entryCount (webhook).
+ */
+export async function migrateLegacyEntriesToSync(candidateId: string) {
+    const lideranca = await prisma.whatsappLideranca.findFirst({
+        where: {
+            name: AUTO_LIDERANCA_NAME,
+            candidateIds: { has: candidateId },
+        } as never,
+        select: { id: true, entryCount: true, entryCountSync: true, entryOriginSplit: true },
+    });
+    if (!lideranca || (lideranca as { entryOriginSplit?: boolean }).entryOriginSplit) {
+        return { migrated: false as const };
+    }
+
+    const groups = await prisma.whatsappGroup.findMany({
+        where: { candidateId },
+        select: { id: true, entryCount: true, entryCountSync: true },
+    });
+
+    let moved = 0;
+    for (const g of groups) {
+        const legacy = g.entryCount || 0;
+        if (legacy <= 0) continue;
+        await prisma.whatsappGroup.update({
+            where: { id: g.id },
+            data: {
+                entryCount: 0,
+                entryCountSync: (g.entryCountSync || 0) + legacy,
+            } as never,
+        });
+        moved += legacy;
+    }
+
+    const lidLegacy = lideranca.entryCount || 0;
+    await prisma.whatsappLideranca.update({
+        where: { id: lideranca.id },
+        data: {
+            entryCount: 0,
+            entryCountSync: ((lideranca as { entryCountSync?: number }).entryCountSync || 0) + lidLegacy,
+            entryOriginSplit: true,
+        } as never,
+    });
+
+    return { migrated: true as const, movedGroupEntries: moved, movedLiderancaEntries: lidLegacy };
+}
+
 function jidToPhone(jid: string): string | null {
     if (!jid) return null;
     const raw = jid.split('@')[0];
@@ -386,7 +434,7 @@ export async function reconcileGroupMembers(
         currentMembers: memberCount,
         lastUpdate: new Date(),
     };
-    if (entries > 0) groupData.entryCount = { increment: entries };
+    if (entries > 0) groupData.entryCountSync = { increment: entries };
     if (exits > 0) groupData.exitCount = { increment: exits };
     await prisma.whatsappGroup.update({
         where: { id: groupDbId },
@@ -395,7 +443,7 @@ export async function reconcileGroupMembers(
 
     if (entries > 0 || exits > 0) {
         const lidData: Record<string, unknown> = { lastUpdate: new Date() };
-        if (entries > 0) lidData.entryCount = { increment: entries };
+        if (entries > 0) lidData.entryCountSync = { increment: entries };
         if (exits > 0) lidData.exitCount = { increment: exits };
         await prisma.whatsappLideranca.update({
             where: { id: group.liderancaId },
@@ -413,6 +461,8 @@ export async function reconcileGroupMembers(
  * 3) prioriza grupos SEM membros no Mongo + divergência de tamanho
  */
 export async function runLightHourlySync(candidateId: string, instanceName: string) {
+    await migrateLegacyEntriesToSync(candidateId);
+
     const allGroups = (await evolutionService.fetchAllGroups(instanceName, false)) as EvolutionGroupShell[];
     const onlyGroups = allGroups.filter((g) => g.id?.endsWith('@g.us'));
     const sizeByJid = new Map(onlyGroups.map((g) => [g.id, typeof g.size === 'number' ? g.size : null]));
@@ -513,6 +563,7 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         where: { candidateId, isManual: false },
         select: {
             entryCount: true,
+            entryCountSync: true,
             exitCount: true,
             members: { select: { phone: true } },
             _count: { select: { members: true } },
@@ -527,6 +578,8 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         data: {
             currentMembers: metrics.uniqueMembers,
             duplicateMembers: metrics.duplicatePhones,
+            entryCount: metrics.entries,
+            entryCountSync: metrics.entriesSync,
             lastUpdate: new Date(),
         } as never,
     });
@@ -544,6 +597,8 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         uniqueMembers: metrics.uniqueMembers,
         duplicatePhones: metrics.duplicatePhones,
         totalSeats: metrics.totalSeats,
+        entriesReal: metrics.entries,
+        entriesSync: metrics.entriesSync,
         currentMembers: metrics.uniqueMembers,
         evolutionReportedSeats: [...sizeByJid.values()].reduce<number>(
             (a, s) => a + (s || 0),

@@ -28,7 +28,7 @@ export function PainelTab({ hasInstagram = false, hasFacebook = false, hasWhatsa
         }
         return {
             members: lid.currentMembers || 0,
-            entries: lid.entryCount || 0,
+            entries: (lid.entryCount || 0) + (lid.entryCountSync || 0),
             exits: lid.exitCount || 0,
         };
     };

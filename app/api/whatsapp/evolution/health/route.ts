@@ -3,6 +3,7 @@ import { prisma } from '@/app/lib/prisma';
 import { assertCandidateEvolutionAccess } from '@/lib/evolution-access';
 import { evolutionService } from '@/services/evolutionService';
 import { aggregateUniqueWhatsappMetrics } from '@/lib/whatsapp-metrics';
+import { migrateLegacyEntriesToSync } from '@/lib/whatsapp-group-live-sync';
 
 export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,9 @@ export async function GET(req: Request) {
         if ('error' in access) {
             return NextResponse.json({ error: access.error }, { status: access.status });
         }
+
+        // Migra +418 antigas para entryCountSync (uma vez)
+        await migrateLegacyEntriesToSync(candidateId);
 
         const instanceName = access.profile.evolutionInstanceName;
         if (!instanceName) {

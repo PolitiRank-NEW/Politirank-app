@@ -74,6 +74,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
     const totalGrupos = allGroupsFlat.length;
     const totalCurrentMembers = candidateMetrics.uniqueMembers;
     const totalEntries = candidateMetrics.entries;
+    const totalEntriesSync = candidateMetrics.entriesSync;
     const totalExits = candidateMetrics.exits;
     const totalDuplicates = candidateMetrics.duplicatePhones;
 
@@ -93,7 +94,12 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
         return "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50 ring-emerald-100 dark:ring-emerald-900";
     };
 
-    const overallEngagement = calculateEngagement(totalCurrentMembers, totalEntries, totalExits);
+    // Engajamento usa reais + sync (toda movimentação)
+    const overallEngagement = calculateEngagement(
+        totalCurrentMembers,
+        totalEntries + totalEntriesSync,
+        totalExits
+    );
 
     if (hasWhatsapp && (messages > 0 || hasHierarchicalData)) {
         return (
@@ -173,6 +179,15 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                         <div className="bg-white dark:bg-slate-950 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
                             <span className="text-sm font-medium text-slate-500 flex items-center gap-2"><UserPlus className="w-4 h-4 text-green-500"/> Entradas Totais</span>
                             <span className="text-2xl font-extrabold text-slate-800 dark:text-slate-200">+{totalEntries.toLocaleString('pt-BR')}</span>
+                            {totalEntriesSync > 0 ? (
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                    +{totalEntriesSync.toLocaleString('pt-BR')} do sync (preenchimento)
+                                </span>
+                            ) : (
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                    só entradas reais (webhook)
+                                </span>
+                            )}
                         </div>
                         <div className="bg-white dark:bg-slate-950 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
                             <span className="text-sm font-medium text-slate-500 flex items-center gap-2"><UserMinus className="w-4 h-4 text-red-500"/> Saídas Totais</span>
@@ -257,6 +272,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                 // Liderança: únicos entre os grupos visíveis (respeita filtro)
                                 let lC = 0;
                                 let lE = 0;
+                                let lESync = 0;
                                 let lEx = 0;
                                 let lDup = 0;
 
@@ -264,16 +280,18 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                     const m = aggregateUniqueWhatsappMetrics(lideranca.groups);
                                     lC = m.uniqueMembers;
                                     lE = m.entries;
+                                    lESync = m.entriesSync;
                                     lEx = m.exits;
                                     lDup = m.duplicatePhones;
                                 } else if (!isFiltered) {
                                     lC = lideranca.currentMembers || 0;
                                     lE = lideranca.entryCount || 0;
+                                    lESync = lideranca.entryCountSync || 0;
                                     lEx = lideranca.exitCount || 0;
                                     lDup = lideranca.duplicateMembers || 0;
                                 }
 
-                                const lEngage = calculateEngagement(lC, lE, lEx);
+                                const lEngage = calculateEngagement(lC, lE + lESync, lEx);
 
                                 return (
                                     <div key={lideranca.id} className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
@@ -319,6 +337,11 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                 <div className="px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-center min-w-[80px]">
                                                     <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Entradas</span>
                                                     <span className="font-bold text-slate-800 dark:text-slate-200">+{lE}</span>
+                                                    {lESync > 0 && (
+                                                        <span className="block text-[9px] text-slate-400 mt-0.5">
+                                                            +{lESync} sync
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-center min-w-[80px]">
                                                     <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Saídas</span>
@@ -341,9 +364,14 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                             {lideranca.groups.map((g: any) => {
                                                                 const gMem = groupMemberCount(g);
                                                                 const gIn = g.entryCount || 0;
+                                                                const gInSync = g.entryCountSync || 0;
                                                                 const gOut = g.exitCount || 0;
-                                                                const gEngage = calculateEngagement(gMem, gIn, gOut);
-                                                                const isActive = gMem > 0 || gIn > 0;
+                                                                const gEngage = calculateEngagement(
+                                                                    gMem,
+                                                                    gIn + gInSync,
+                                                                    gOut
+                                                                );
+                                                                const isActive = gMem > 0 || gIn > 0 || gInSync > 0;
 
                                                                 return (
                                                                     <button
@@ -393,6 +421,11 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                                             <div className="flex flex-col">
                                                                                 <span className="text-xs font-medium text-slate-400">Entradas</span>
                                                                                 <span className="font-bold text-slate-800 dark:text-slate-200">+{gIn}</span>
+                                                                                {gInSync > 0 && (
+                                                                                    <span className="text-[10px] text-slate-400">
+                                                                                        +{gInSync} sync
+                                                                                    </span>
+                                                                                )}
                                                                             </div>
                                                                             <div className="flex flex-col">
                                                                                 <span className="text-xs font-medium text-slate-400">Saídas</span>
@@ -430,9 +463,14 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                             {lideranca.groups.map((g: any) => {
                                                                 const gMem = groupMemberCount(g);
                                                                 const gIn = g.entryCount || 0;
+                                                                const gInSync = g.entryCountSync || 0;
                                                                 const gOut = g.exitCount || 0;
-                                                                const gEngage = calculateEngagement(gMem, gIn, gOut);
-                                                                const isActive = gMem > 0 || gIn > 0;
+                                                                const gEngage = calculateEngagement(
+                                                                    gMem,
+                                                                    gIn + gInSync,
+                                                                    gOut
+                                                                );
+                                                                const isActive = gMem > 0 || gIn > 0 || gInSync > 0;
 
                                                                 return (
                                                                     <button

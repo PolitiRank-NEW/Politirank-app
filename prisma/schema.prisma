@@ -264,10 +264,13 @@ model WhatsappLideranca {
   status           String?  @default("ATIVO") // ATIVO, INATIVO, PROSPECCAO
 
   // Aggregated Metrics (Calculado a partir de grupos)
-  entryCount       Int      @default(0)
+  entryCount       Int      @default(0)  // Entradas reais (webhook)
+  entryCountSync   Int      @default(0)  // Entradas do sync/catch-up
   exitCount        Int      @default(0)
   currentMembers   Int      @default(0)
   duplicateMembers Int      @default(0)
+  // true = entryCount antigo já foi movido para entryCountSync
+  entryOriginSplit Boolean  @default(false)
   
   // Future metrics
   pollsCount       Int      @default(0)
@@ -301,7 +304,8 @@ model WhatsappGroup {
   description      String?
 
   // Raw metrics
-  entryCount       Int      @default(0)
+  entryCount       Int      @default(0)  // Entradas reais (webhook)
+  entryCountSync   Int      @default(0)  // Entradas do sync/catch-up
   exitCount        Int      @default(0)
   currentMembers   Int      @default(0)
   duplicateMembers Int      @default(0)

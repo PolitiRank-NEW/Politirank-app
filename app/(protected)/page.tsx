@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ClientDashboardTabs } from '@/components/dashboard/ClientDashboardTabs';
 import Link from 'next/link';
+import { migrateLegacyEntriesToSync } from '@/lib/whatsapp-group-live-sync';
 
 export default async function Home({ searchParams }: { searchParams?: Promise<{ viewAs?: string }> }) {
   const session = await auth();
@@ -61,6 +62,9 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const whatsappMessages = whatsappProfile ? (whatsappProfile.followers || 0) : 0;
 
   // Busca Hierarquia Completa do Wpp (Multi-Candidato)
+  if (profile?.id) {
+    await migrateLegacyEntriesToSync(profile.id);
+  }
   const whatsappLiderancas = profile?.id ? await prisma.whatsappLideranca.findMany({
     where: { candidateIds: { has: profile.id } } as any,
     include: {
@@ -170,11 +174,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     
     whatsappLiderancas.forEach((l: any) => {
         totalWppCurrentMembers += (l.currentMembers || 0);
-        totalWppInteractions += (l.entryCount || 0) + (l.exitCount || 0);
+        totalWppInteractions += (l.entryCount || 0) + (l.entryCountSync || 0) + (l.exitCount || 0);
         if (l.groups) {
             l.groups.forEach((g: any) => {
                 totalWppCurrentMembers += (g.currentMembers || 0);
-                totalWppInteractions += (g.entryCount || 0) + (g.exitCount || 0);
+                totalWppInteractions += (g.entryCount || 0) + (g.entryCountSync || 0) + (g.exitCount || 0);
             });
         }
     });
