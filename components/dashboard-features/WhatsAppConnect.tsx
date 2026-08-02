@@ -18,6 +18,8 @@ type HealthReport = {
     status: "ok" | "warning" | "critical" | "not_configured";
     message: string;
     issues: string[];
+    seatsDiff?: number;
+    groupsDiff?: number;
     evolution?: { reachable: boolean; groups: number; seats: number };
     app?: {
         groups: number;
@@ -30,6 +32,7 @@ type HealthReport = {
     };
     lastLiderancaUpdate?: string | null;
     suggestFullSync?: boolean;
+    suggestLightSync?: boolean;
 };
 
 export function WhatsAppConnect({
@@ -48,6 +51,7 @@ export function WhatsAppConnect({
     const [syncProgress, setSyncProgress] = useState<string | null>(null);
     const [health, setHealth] = useState<HealthReport | null>(null);
     const [healthLoading, setHealthLoading] = useState(false);
+    const [catchUpMsg, setCatchUpMsg] = useState<string | null>(null);
     const autoSyncDone = useRef(false);
     const syncingLock = useRef(false);
     const wasConnecting = useRef(false);
@@ -56,27 +60,63 @@ export function WhatsAppConnect({
         ? `politirank-wa-fullsync-${candidateProfileId}`
         : null;
 
-    const fetchHealth = useCallback(async () => {
-        if (!candidateProfileId) return;
-        setHealthLoading(true);
-        try {
-            const res = await fetch(
-                `/api/whatsapp/evolution/health?candidateId=${candidateProfileId}`
-            );
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Falha ao checar saúde.");
-            setHealth(data as HealthReport);
-        } catch (err: unknown) {
-            setHealth({
-                ok: false,
-                status: "critical",
-                message: err instanceof Error ? err.message : "Erro ao checar dados.",
-                issues: [],
-            });
-        } finally {
-            setHealthLoading(false);
-        }
-    }, [candidateProfileId]);
+    const fetchHealth = useCallback(
+        async (opts?: { catchUp?: boolean }) => {
+            if (!candidateProfileId) return;
+            setHealthLoading(true);
+            setCatchUpMsg(null);
+            try {
+                const res = await fetch(
+                    `/api/whatsapp/evolution/health?candidateId=${candidateProfileId}`
+                );
+                const data = (await res.json()) as HealthReport & { error?: string };
+                if (!res.ok) throw new Error(data.error || "Falha ao checar saúde.");
+                setHealth(data);
+
+                const shouldCatchUp =
+                    opts?.catchUp &&
+                    (data.suggestLightSync ||
+                        Math.abs(data.seatsDiff || 0) > 10 ||
+                        Math.abs(data.groupsDiff || 0) > 0 ||
+                        (data.app?.groupsEmptyMembers || 0) > 0);
+
+                if (shouldCatchUp) {
+                    setCatchUpMsg("Diferença detectada — rodando sync leve agora…");
+                    const syncRes = await fetch("/api/whatsapp/evolution/light-sync", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ candidateId: candidateProfileId }),
+                    });
+                    const syncData = await syncRes.json();
+                    if (!syncRes.ok) {
+                        throw new Error(syncData.error || "Falha no sync leve.");
+                    }
+                    const r = syncData.result;
+                    setCatchUpMsg(
+                        r
+                            ? `Sync leve: ${r.reconciledGroups || 0} grupo(s) · +${r.entries || 0}/-${r.exits || 0} · ${r.totalSeats ?? "?"} vagas no app`
+                            : "Sync leve concluído."
+                    );
+
+                    const res2 = await fetch(
+                        `/api/whatsapp/evolution/health?candidateId=${candidateProfileId}`
+                    );
+                    const data2 = await res2.json();
+                    if (res2.ok) setHealth(data2 as HealthReport);
+                }
+            } catch (err: unknown) {
+                setHealth({
+                    ok: false,
+                    status: "critical",
+                    message: err instanceof Error ? err.message : "Erro ao checar dados.",
+                    issues: [],
+                });
+            } finally {
+                setHealthLoading(false);
+            }
+        },
+        [candidateProfileId]
+    );
 
     const fetchStatus = useCallback(async () => {
         if (!candidateProfileId) return;
@@ -358,7 +398,7 @@ export function WhatsAppConnect({
                         Conexão Evolution API
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                        Evolution (Contabo) — grupos e entradas/saídas entram no webhook; sync leve a cada 1h
+                        Evolution (Contabo) — webhook em tempo real; sync leve a cada 1h; Verificar dispara catch-up se diferença &gt; 10
                     </p>
                 </div>
                 <span
@@ -408,7 +448,7 @@ export function WhatsAppConnect({
                             </span>
                             <button
                                 type="button"
-                                onClick={() => fetchHealth()}
+                                onClick={() => fetchHealth({ catchUp: true })}
                                 disabled={healthLoading}
                                 className="inline-flex items-center gap-1 font-semibold opacity-80 hover:opacity-100"
                             >
@@ -420,6 +460,9 @@ export function WhatsAppConnect({
                                 Verificar
                             </button>
                         </div>
+                        {catchUpMsg && (
+                            <p className="opacity-90 font-medium">{catchUpMsg}</p>
+                        )}
                         {health?.evolution && health?.app && (
                             <p className="font-mono text-[11px] opacity-90">
                                 Celular: {health.evolution.groups} grupos / {health.evolution.seats}{" "}
@@ -483,7 +526,7 @@ export function WhatsAppConnect({
                     <p className="text-[11px] text-slate-400">
                         {health?.suggestFullSync
                             ? "A checagem recomenda sync completo agora (divergência alta)."
-                            : "Use só se a checagem acima ficar vermelha/amarela. No dia a dia: webhook + timer 1h."}
+                            : "Use só se a checagem acima ficar vermelha. No dia a dia: webhook + Verificar (catch-up) + timer 1h."}
                     </p>
                 </div>
             )}

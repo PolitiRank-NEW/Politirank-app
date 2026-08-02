@@ -96,7 +96,7 @@ export async function GET(req: Request) {
             status = status === 'critical' ? 'critical' : 'warning';
             issues.push(`${emptyMembers.length} grupo(s) sem membros cadastrados (sync ainda preenchendo)`);
         }
-        if (Math.abs(seatsDiff) > 20) {
+        if (Math.abs(seatsDiff) > 10) {
             status = status === 'critical' ? 'critical' : 'warning';
             issues.push(
                 `Diferença de ~${Math.abs(seatsDiff)} vagas entre WhatsApp (${evoSeats}) e app (${metrics.totalSeats})`
@@ -113,9 +113,11 @@ export async function GET(req: Request) {
                 status === 'ok'
                     ? 'Dados sob controle — sync leve ok.'
                     : status === 'warning'
-                      ? 'Há divergências leves — o timer horário deve corrigir.'
+                      ? 'Há divergências — clique Verificar para sync leve agora.'
                       : 'Atenção: verifique Evolution/celular ou rode sync de emergência.',
             issues,
+            seatsDiff,
+            groupsDiff,
             evolution: {
                 reachable: !evoError,
                 groups: evoOnly.length,
@@ -133,6 +135,10 @@ export async function GET(req: Request) {
             },
             lastLiderancaUpdate: lideranca?.lastUpdate || null,
             suggestFullSync: status === 'critical' || emptyMembers.length > 40 || Math.abs(groupsDiff) > 10,
+            suggestLightSync:
+                Math.abs(seatsDiff) > 10 ||
+                Math.abs(groupsDiff) > 0 ||
+                emptyMembers.length > 0,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Erro interno.';
