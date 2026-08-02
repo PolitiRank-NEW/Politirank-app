@@ -17,17 +17,29 @@ export function PainelTab({ hasInstagram = false, hasFacebook = false, hasWhatsa
     const mockLeaders: any[] = [];
 
     const getWppMetrics = (lid: any) => {
-        let members = lid.currentMembers || 0;
-        let entries = lid.entryCount || 0;
-        let exits = lid.exitCount || 0;
+        const groupMemberCount = (g: any): number => {
+            if (typeof g?._count?.members === 'number') return g._count.members;
+            if (Array.isArray(g?.members)) return g.members.length;
+            return Number(g?.currentMembers) || 0;
+        };
+
         if (lid.groups && lid.groups.length > 0) {
-            lid.groups.forEach((g: any) => { 
-                members += (g.currentMembers || 0);
-                entries += (g.entryCount || 0);
-                exits += (g.exitCount || 0);
+            let members = 0;
+            let entries = 0;
+            let exits = 0;
+            lid.groups.forEach((g: any) => {
+                members += groupMemberCount(g);
+                entries += g.entryCount || 0;
+                exits += g.exitCount || 0;
             });
+            return { members, entries, exits };
         }
-        return { members, entries, exits };
+
+        return {
+            members: lid.currentMembers || 0,
+            entries: lid.entryCount || 0,
+            exits: lid.exitCount || 0,
+        };
     };
 
     // Função utilitária para calcular engajamento em percentual (igual no WhatsAppTracker)

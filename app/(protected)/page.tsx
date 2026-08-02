@@ -63,7 +63,14 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   // Busca Hierarquia Completa do Wpp (Multi-Candidato)
   const whatsappLiderancas = profile?.id ? await prisma.whatsappLideranca.findMany({
     where: { candidateIds: { has: profile.id } } as any,
-    include: { groups: { include: { members: true } }, user: true }
+    include: {
+      groups: {
+        include: {
+          _count: { select: { members: true } },
+        },
+      },
+      user: true,
+    },
   }) : [];
 
   // A aba do WhatsApp deve aparecer quando houver perfil manual OU estrutura (lideranças/grupos) cadastrada manualmente.

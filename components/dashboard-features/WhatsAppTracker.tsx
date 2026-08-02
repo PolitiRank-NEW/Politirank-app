@@ -63,30 +63,36 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
 
     const readOnly = userRole === 'CANDIDATO';
 
-    // Cálculos Agregados de Hierarquia para o Candidato
+    /** Contagem real: registros de membros no Mongo (não o size da Evolution). */
+    const groupMemberCount = (g: any): number => {
+        if (typeof g?._count?.members === 'number') return g._count.members;
+        if (Array.isArray(g?.members)) return g.members.length;
+        return Number(g?.currentMembers) || 0;
+    };
+
+    // Totais do candidato = soma apenas dos GRUPOS (evita contar 2x o agregado da liderança)
     let totalLiderancas = liderancas.length;
     let totalGrupos = 0;
-    
-    // As lideranças também podem ter métricas próprias, então somamos tudo
     let totalCurrentMembers = 0;
     let totalEntries = 0;
     let totalExits = 0;
     let totalDuplicates = 0;
 
-    liderancas.forEach(l => {
-        totalEntries += (l.entryCount || 0);
-        totalExits += (l.exitCount || 0);
-        totalCurrentMembers += (l.currentMembers || 0);
-        totalDuplicates += (l.duplicateMembers || 0);
-        
+    liderancas.forEach((l) => {
         if (l.groups && l.groups.length > 0) {
             totalGrupos += l.groups.length;
             l.groups.forEach((g: any) => {
-                totalEntries += (g.entryCount || 0);
-                totalExits += (g.exitCount || 0);
-                totalCurrentMembers += (g.currentMembers || 0);
-                totalDuplicates += (g.duplicateMembers || 0);
+                totalCurrentMembers += groupMemberCount(g);
+                totalEntries += g.entryCount || 0;
+                totalExits += g.exitCount || 0;
+                totalDuplicates += g.duplicateMembers || 0;
             });
+        } else {
+            // Liderança sem grupos vinculados: usa métricas próprias
+            totalCurrentMembers += l.currentMembers || 0;
+            totalEntries += l.entryCount || 0;
+            totalExits += l.exitCount || 0;
+            totalDuplicates += l.duplicateMembers || 0;
         }
     });
 
@@ -128,7 +134,9 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                             <h2 className="text-[1.35rem] font-bold text-slate-900 dark:text-white leading-tight flex items-center gap-2">
                                 Rastreador do WhatsApp
                             </h2>
-                            <p className="text-[15px] font-medium text-slate-500">Visão Geral do Candidato (Soma de todas as instâncias)</p>
+                            <p className="text-[15px] font-medium text-slate-500">
+                                Visão Geral do Candidato (soma dos membros cadastrados em cada grupo)
+                            </p>
                         </div>
 
                         {candidateProfileId && (
@@ -265,8 +273,8 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                 const hasGroups = lideranca.groups && lideranca.groups.length > 0;
                                 const isFiltered = Boolean(groupFilter.trim());
 
-                                // Com filtro (ou com grupos na lista): soma só os grupos visíveis.
-                                // Sem grupos: cai no agregado salvo na liderança.
+                                // Com grupos na lista: soma só esses grupos (filtro incluso).
+                                // Sem grupos: cai no agregado da liderança.
                                 let lC = 0;
                                 let lE = 0;
                                 let lEx = 0;
@@ -274,7 +282,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
 
                                 if (hasGroups) {
                                     lideranca.groups.forEach((g: any) => {
-                                        lC += g.currentMembers || 0;
+                                        lC += groupMemberCount(g);
                                         lE += g.entryCount || 0;
                                         lEx += g.exitCount || 0;
                                         lDup += g.duplicateMembers || 0;
@@ -352,7 +360,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                         <h5 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-4 px-1 pt-4">Grupos desta liderança</h5>
                                                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                                                             {lideranca.groups.map((g: any) => {
-                                                                const gMem = g.currentMembers || 0;
+                                                                const gMem = groupMemberCount(g);
                                                                 const gIn = g.entryCount || 0;
                                                                 const gOut = g.exitCount || 0;
                                                                 const gEngage = calculateEngagement(gMem, gIn, gOut);
@@ -380,11 +388,6 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                                                 {g.groupLeaderName && (
                                                                                     <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 pl-7">
                                                                                         <User className="w-3 h-3" /> Admin: {g.groupLeaderName}
-                                                                                    </span>
-                                                                                )}
-                                                                                {(g.members?.length ?? 0) > 0 && (
-                                                                                    <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 pl-7">
-                                                                                        {g.members.length} pessoas cadastradas
                                                                                     </span>
                                                                                 )}
                                                                             </div>
@@ -446,7 +449,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                     <div className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
                                                         <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
                                                             {lideranca.groups.map((g: any) => {
-                                                                const gMem = g.currentMembers || 0;
+                                                                const gMem = groupMemberCount(g);
                                                                 const gIn = g.entryCount || 0;
                                                                 const gOut = g.exitCount || 0;
                                                                 const gEngage = calculateEngagement(gMem, gIn, gOut);
@@ -476,12 +479,6 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                                                                 </h6>
                                                                                 <div className="flex items-center gap-2 mt-0.5">
                                                                                     <span className="text-[10px] font-medium text-slate-500">{gMem} membros</span>
-                                                                                    {(g.members?.length ?? 0) > 0 && (
-                                                                                        <>
-                                                                                            <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600"></span>
-                                                                                            <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">{g.members.length} cadastrados</span>
-                                                                                        </>
-                                                                                    )}
                                                                                     <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600"></span>
                                                                                     {isActive ? (
                                                                                         <span className="text-[10px] font-bold text-green-600 dark:text-green-400">Ativo</span>
