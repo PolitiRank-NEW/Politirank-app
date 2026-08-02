@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/whatsapp-light-sync",
-      "schedule": "0 * * * *"
-    }
-  ]
-}
+{}

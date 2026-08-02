@@ -124,20 +124,22 @@ Redeploy o app após salvar.
 O webhook já cria grupo novo e registra entrada/saída em tempo real.
 O cron horário é um **safety net leve** (lista grupos; só busca membros onde o tamanho mudou).
 
+> **Hobby da Vercel:** cron nativo só pode rodar **1x/dia**. Timer de **1 em 1 hora** fica na **Contabo** (abaixo).
+
 1. Na Vercel, adicione `CRON_SECRET` (chave longa aleatória) em Production.
-2. No Hobby, cron horário da Vercel pode não rodar — use a Contabo:
+2. Na Contabo:
 
 ```bash
 # na VPS
 cd /opt/politirank-evolution
-# copie cron-light-sync.sh e cron.env.example do repo
-cp cron.env.example cron.env
-nano cron.env   # CRON_SECRET=igual à Vercel  APP_URL=https://politirank-app.vercel.app
+# cron-light-sync.sh + cron.env (CRON_SECRET igual à Vercel, APP_URL=https://politirank-app.vercel.app)
 chmod +x cron-light-sync.sh
 crontab -e
 # adicione:
 # 0 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
 ```
+
+Opcional (Pro): dá para voltar o cron nativo em `vercel.json` com `"schedule": "0 * * * *"`.
 
 ---
 
