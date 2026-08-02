@@ -398,7 +398,7 @@ export function WhatsAppConnect({
                         Conexão Evolution API
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                        Evolution (Contabo) — webhook em tempo real; sync leve a cada 1h; Verificar dispara catch-up se diferença &gt; 10
+                        Evolution (Contabo) — webhook em tempo real; sync leve a cada 30 min; Verificar dispara catch-up se diferença &gt; 10
                     </p>
                 </div>
                 <span
@@ -526,7 +526,7 @@ export function WhatsAppConnect({
                     <p className="text-[11px] text-slate-400">
                         {health?.suggestFullSync
                             ? "A checagem recomenda sync completo agora (divergência alta)."
-                            : "Use só se a checagem acima ficar vermelha. No dia a dia: webhook + Verificar (catch-up) + timer 1h."}
+                            : "Use só se a checagem acima ficar vermelha. No dia a dia: webhook + Verificar (catch-up) + timer 30 min."}
                     </p>
                 </div>
             )}
