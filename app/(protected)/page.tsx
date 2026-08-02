@@ -66,6 +66,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     include: {
       groups: {
         include: {
+          members: { select: { phone: true } },
           _count: { select: { members: true } },
         },
       },

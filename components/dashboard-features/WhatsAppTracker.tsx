@@ -3,6 +3,10 @@ import { MessageCircle, Users, TrendingUp, Info, Activity, UserPlus, UserMinus, 
 import { WhatsAppGroupDetail } from "./WhatsAppGroupDetail";
 import { WhatsAppConnect } from "./WhatsAppConnect";
 import { WhatsAppSourceScannerDialog } from "./WhatsAppSourceScannerDialog";
+import {
+    aggregateUniqueWhatsappMetrics,
+    groupMemberCount,
+} from "@/lib/whatsapp-metrics";
 
 interface WhatsAppTrackerProps {
     hasWhatsapp?: boolean;
@@ -63,38 +67,15 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
 
     const readOnly = userRole === 'CANDIDATO';
 
-    /** Contagem real: registros de membros no Mongo (não o size da Evolution). */
-    const groupMemberCount = (g: any): number => {
-        if (typeof g?._count?.members === 'number') return g._count.members;
-        if (Array.isArray(g?.members)) return g.members.length;
-        return Number(g?.currentMembers) || 0;
-    };
-
-    // Totais do candidato = soma apenas dos GRUPOS (evita contar 2x o agregado da liderança)
-    let totalLiderancas = liderancas.length;
-    let totalGrupos = 0;
-    let totalCurrentMembers = 0;
-    let totalEntries = 0;
-    let totalExits = 0;
-    let totalDuplicates = 0;
-
-    liderancas.forEach((l) => {
-        if (l.groups && l.groups.length > 0) {
-            totalGrupos += l.groups.length;
-            l.groups.forEach((g: any) => {
-                totalCurrentMembers += groupMemberCount(g);
-                totalEntries += g.entryCount || 0;
-                totalExits += g.exitCount || 0;
-                totalDuplicates += g.duplicateMembers || 0;
-            });
-        } else {
-            // Liderança sem grupos vinculados: usa métricas próprias
-            totalCurrentMembers += l.currentMembers || 0;
-            totalEntries += l.entryCount || 0;
-            totalExits += l.exitCount || 0;
-            totalDuplicates += l.duplicateMembers || 0;
-        }
-    });
+    // Totais do candidato: pessoas ÚNICAS; repetidos → Duplicados (não somam de novo no total)
+    const allGroupsFlat = liderancas.flatMap((l: any) => l.groups || []);
+    const candidateMetrics = aggregateUniqueWhatsappMetrics(allGroupsFlat);
+    const totalLiderancas = liderancas.length;
+    const totalGrupos = allGroupsFlat.length;
+    const totalCurrentMembers = candidateMetrics.uniqueMembers;
+    const totalEntries = candidateMetrics.entries;
+    const totalExits = candidateMetrics.exits;
+    const totalDuplicates = candidateMetrics.duplicatePhones;
 
     const hasHierarchicalData = totalLiderancas > 0;
     
@@ -135,7 +116,7 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                 Rastreador do WhatsApp
                             </h2>
                             <p className="text-[15px] font-medium text-slate-500">
-                                Visão Geral do Candidato (soma dos membros cadastrados em cada grupo)
+                                Total = pessoas únicas; Duplicados = mesmo telefone em 2+ grupos
                             </p>
                         </div>
 
@@ -273,20 +254,18 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                                 const hasGroups = lideranca.groups && lideranca.groups.length > 0;
                                 const isFiltered = Boolean(groupFilter.trim());
 
-                                // Com grupos na lista: soma só esses grupos (filtro incluso).
-                                // Sem grupos: cai no agregado da liderança.
+                                // Liderança: únicos entre os grupos visíveis (respeita filtro)
                                 let lC = 0;
                                 let lE = 0;
                                 let lEx = 0;
                                 let lDup = 0;
 
                                 if (hasGroups) {
-                                    lideranca.groups.forEach((g: any) => {
-                                        lC += groupMemberCount(g);
-                                        lE += g.entryCount || 0;
-                                        lEx += g.exitCount || 0;
-                                        lDup += g.duplicateMembers || 0;
-                                    });
+                                    const m = aggregateUniqueWhatsappMetrics(lideranca.groups);
+                                    lC = m.uniqueMembers;
+                                    lE = m.entries;
+                                    lEx = m.exits;
+                                    lDup = m.duplicatePhones;
                                 } else if (!isFiltered) {
                                     lC = lideranca.currentMembers || 0;
                                     lE = lideranca.entryCount || 0;

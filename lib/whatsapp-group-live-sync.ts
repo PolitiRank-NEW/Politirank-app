@@ -9,7 +9,7 @@ import { evolutionService } from '@/services/evolutionService';
 export const AUTO_LIDERANCA_NAME = 'Grupos WhatsApp (Evolution)';
 
 /** Máx. de grupos com fetch de participantes por rodada do cron (protege Evolution). */
-export const CRON_MEMBER_RECONCILE_LIMIT = 40;
+export const CRON_MEMBER_RECONCILE_LIMIT = 50;
 
 function jidToPhone(jid: string): string | null {
     if (!jid) return null;
@@ -407,14 +407,15 @@ export async function reconcileGroupMembers(
 }
 
 /**
- * Sync horário leve para um candidato:
+ * Sync horário / catch-up:
  * 1) lista todos os grupos (sem membros)
- * 2) cria/atualiza cascas
- * 3) reconcilia participantes só onde o tamanho mudou / grupo novo (cap)
+ * 2) cria/atualiza cascas (sem inventar currentMembers pelo size)
+ * 3) prioriza grupos SEM membros no Mongo + divergência de tamanho
  */
 export async function runLightHourlySync(candidateId: string, instanceName: string) {
     const allGroups = (await evolutionService.fetchAllGroups(instanceName, false)) as EvolutionGroupShell[];
     const onlyGroups = allGroups.filter((g) => g.id?.endsWith('@g.us'));
+    const sizeByJid = new Map(onlyGroups.map((g) => [g.id, typeof g.size === 'number' ? g.size : null]));
 
     const lideranca = await ensureAutoLideranca(candidateId);
     let createdGroups = 0;
@@ -422,20 +423,33 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
 
     const existing = await prisma.whatsappGroup.findMany({
         where: { candidateId, isManual: false },
-        select: { id: true, groupId: true, currentMembers: true, name: true },
+        select: {
+            id: true,
+            groupId: true,
+            currentMembers: true,
+            name: true,
+            _count: { select: { members: true } },
+        },
     });
     const byJid = new Map(existing.filter((g) => g.groupId).map((g) => [g.groupId as string, g]));
 
-    const reconcileQueue: Array<{ dbId: string; jid: string; name: string; isNew: boolean }> = [];
+    type QueueItem = { dbId: string; jid: string; name: string; isNew: boolean; priority: number };
+    const reconcileQueue: QueueItem[] = [];
 
     for (const g of onlyGroups) {
         const prev = byJid.get(g.id);
         const size = typeof g.size === 'number' ? g.size : null;
 
         if (!prev) {
-            const shell = await upsertGroupShell(candidateId, g);
+            const shell = await upsertGroupShell(candidateId, { ...g, size: 0 });
             createdGroups += 1;
-            reconcileQueue.push({ dbId: shell.dbId, jid: g.id, name: shell.name, isNew: true });
+            reconcileQueue.push({
+                dbId: shell.dbId,
+                jid: g.id,
+                name: shell.name,
+                isNew: true,
+                priority: 0,
+            });
             continue;
         }
 
@@ -444,17 +458,25 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
             where: { id: prev.id },
             data: {
                 name,
-                currentMembers: size ?? prev.currentMembers,
                 liderancaId: lideranca.id,
                 lastUpdate: new Date(),
             } as never,
         });
         updatedGroups += 1;
 
-        const sizeMismatch = size !== null && size !== prev.currentMembers;
-        const noMembersYet = size !== null && size > 0 && prev.currentMembers === 0;
-        if (sizeMismatch || noMembersYet) {
-            reconcileQueue.push({ dbId: prev.id, jid: g.id, name, isNew: noMembersYet && !sizeMismatch });
+        const memberCount = prev._count?.members ?? 0;
+        const empty = memberCount === 0 && (size === null || size > 0);
+        const sizeMismatch = size !== null && size !== memberCount;
+
+        if (empty || sizeMismatch) {
+            reconcileQueue.push({
+                dbId: prev.id,
+                jid: g.id,
+                name,
+                isNew: empty,
+                // Prioridade: vazios primeiro, depois maior divergência
+                priority: empty ? 0 : Math.abs((size || 0) - memberCount),
+            });
         }
     }
 
@@ -467,6 +489,11 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         await prisma.whatsappGroup.deleteMany({ where: { id: { in: ids } } });
     }
 
+    reconcileQueue.sort((a, b) => {
+        if (a.isNew !== b.isNew) return a.isNew ? -1 : 1;
+        return b.priority - a.priority;
+    });
+
     const toReconcile = reconcileQueue.slice(0, CRON_MEMBER_RECONCILE_LIMIT);
     let totalEntries = 0;
     let totalExits = 0;
@@ -474,7 +501,6 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
 
     for (const item of toReconcile) {
         const r = await reconcileGroupMembers(instanceName, item.dbId, item.jid, {
-            // Grupo novo / primeira carga: só popula. Diferença de tamanho: conta entrada/saída.
             countAsEntries: !item.isNew,
         });
         totalEntries += r.entries;
@@ -482,12 +508,27 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         reconciled += 1;
     }
 
-    const aggMembers = await prisma.whatsappGroupMember.count({
-        where: { group: { candidateId, isManual: false } },
+    // Atualiza agregados da liderança: únicos + duplicados (telefones em 2+ grupos)
+    const groupsForMetrics = await prisma.whatsappGroup.findMany({
+        where: { candidateId, isManual: false },
+        select: {
+            entryCount: true,
+            exitCount: true,
+            members: { select: { phone: true } },
+            _count: { select: { members: true } },
+        },
     });
+
+    const { aggregateUniqueWhatsappMetrics } = await import('@/lib/whatsapp-metrics');
+    const metrics = aggregateUniqueWhatsappMetrics(groupsForMetrics);
+
     await prisma.whatsappLideranca.update({
         where: { id: lideranca.id },
-        data: { currentMembers: aggMembers, lastUpdate: new Date() } as never,
+        data: {
+            currentMembers: metrics.uniqueMembers,
+            duplicateMembers: metrics.duplicatePhones,
+            lastUpdate: new Date(),
+        } as never,
     });
 
     return {
@@ -500,7 +541,14 @@ export async function runLightHourlySync(candidateId: string, instanceName: stri
         pendingReconcile: Math.max(0, reconcileQueue.length - reconciled),
         entries: totalEntries,
         exits: totalExits,
-        currentMembers: aggMembers,
+        uniqueMembers: metrics.uniqueMembers,
+        duplicatePhones: metrics.duplicatePhones,
+        totalSeats: metrics.totalSeats,
+        currentMembers: metrics.uniqueMembers,
+        evolutionReportedSeats: [...sizeByJid.values()].reduce<number>(
+            (a, s) => a + (s || 0),
+            0
+        ),
     };
 }
 
