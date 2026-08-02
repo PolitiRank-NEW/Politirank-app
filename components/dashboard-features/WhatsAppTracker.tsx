@@ -263,20 +263,27 @@ export function WhatsAppTracker({ hasWhatsapp = false, messages = 0, liderancas 
                             ) : null}
                             {filteredLiderancas.map((lideranca) => {
                                 const hasGroups = lideranca.groups && lideranca.groups.length > 0;
-                                
-                                // Somatorios exclusivos desta liderança incuindo os grupos abaixo dela
-                                let lC = lideranca.currentMembers || 0;
-                                let lE = lideranca.entryCount || 0;
-                                let lEx = lideranca.exitCount || 0;
-                                let lDup = lideranca.duplicateMembers || 0;
-                                
+                                const isFiltered = Boolean(groupFilter.trim());
+
+                                // Com filtro (ou com grupos na lista): soma só os grupos visíveis.
+                                // Sem grupos: cai no agregado salvo na liderança.
+                                let lC = 0;
+                                let lE = 0;
+                                let lEx = 0;
+                                let lDup = 0;
+
                                 if (hasGroups) {
                                     lideranca.groups.forEach((g: any) => {
-                                        lC += (g.currentMembers || 0);
-                                        lE += (g.entryCount || 0);
-                                        lEx += (g.exitCount || 0);
-                                        lDup += (g.duplicateMembers || 0);
+                                        lC += g.currentMembers || 0;
+                                        lE += g.entryCount || 0;
+                                        lEx += g.exitCount || 0;
+                                        lDup += g.duplicateMembers || 0;
                                     });
+                                } else if (!isFiltered) {
+                                    lC = lideranca.currentMembers || 0;
+                                    lE = lideranca.entryCount || 0;
+                                    lEx = lideranca.exitCount || 0;
+                                    lDup = lideranca.duplicateMembers || 0;
                                 }
 
                                 const lEngage = calculateEngagement(lC, lE, lEx);
