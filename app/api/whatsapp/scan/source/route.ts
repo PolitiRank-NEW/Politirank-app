@@ -191,3 +191,122 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }
+
+function isManualMessageId(messageId: string | null | undefined) {
+    return String(messageId || '').startsWith('manual-');
+}
+
+/**
+ * PATCH { candidateId, postId, caption } — edita só input manual
+ */
+export async function PATCH(req: Request) {
+    try {
+        const body = await req.json();
+        const candidateId = body?.candidateId as string | undefined;
+        const postId = body?.postId as string | undefined;
+        const caption = typeof body?.caption === 'string' ? body.caption.trim() : '';
+
+        if (!candidateId || !postId) {
+            return NextResponse.json(
+                { error: 'candidateId e postId são obrigatórios.' },
+                { status: 400 }
+            );
+        }
+        if (!caption || caption.length < 2) {
+            return NextResponse.json(
+                { error: 'Informe a legenda/conteúdo (mín. 2 caracteres).' },
+                { status: 400 }
+            );
+        }
+        if (caption.length > 4000) {
+            return NextResponse.json({ error: 'Legenda muito longa.' }, { status: 400 });
+        }
+
+        const access = await assertCandidateEvolutionAccess(candidateId);
+        if ('error' in access) {
+            return NextResponse.json({ error: access.error }, { status: access.status });
+        }
+
+        const existing = await prisma.whatsappSourcePost.findFirst({
+            where: { id: postId, candidateId },
+            select: { id: true, messageId: true },
+        });
+        if (!existing) {
+            return NextResponse.json({ error: 'Conteúdo não encontrado.' }, { status: 404 });
+        }
+        if (!isManualMessageId(existing.messageId)) {
+            return NextResponse.json(
+                { error: 'Só é possível editar conteúdos de input manual.' },
+                { status: 403 }
+            );
+        }
+
+        const post = await prisma.whatsappSourcePost.update({
+            where: { id: existing.id },
+            data: { caption },
+        });
+
+        return NextResponse.json({
+            success: true,
+            post,
+            message: 'Conteúdo manual atualizado.',
+        });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Erro interno.';
+        console.error('[scan/source PATCH]', message);
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
+}
+
+/**
+ * DELETE { candidateId, postId } — apaga só input manual (+ matches em cascade)
+ */
+export async function DELETE(req: Request) {
+    try {
+        const body = await req.json().catch(() => ({}));
+        const { searchParams } = new URL(req.url);
+        const candidateId =
+            (body?.candidateId as string | undefined) ||
+            searchParams.get('candidateId') ||
+            undefined;
+        const postId =
+            (body?.postId as string | undefined) || searchParams.get('postId') || undefined;
+
+        if (!candidateId || !postId) {
+            return NextResponse.json(
+                { error: 'candidateId e postId são obrigatórios.' },
+                { status: 400 }
+            );
+        }
+
+        const access = await assertCandidateEvolutionAccess(candidateId);
+        if ('error' in access) {
+            return NextResponse.json({ error: access.error }, { status: access.status });
+        }
+
+        const existing = await prisma.whatsappSourcePost.findFirst({
+            where: { id: postId, candidateId },
+            select: { id: true, messageId: true },
+        });
+        if (!existing) {
+            return NextResponse.json({ error: 'Conteúdo não encontrado.' }, { status: 404 });
+        }
+        if (!isManualMessageId(existing.messageId)) {
+            return NextResponse.json(
+                { error: 'Só é possível apagar conteúdos de input manual.' },
+                { status: 403 }
+            );
+        }
+
+        await prisma.whatsappSourcePost.delete({ where: { id: existing.id } });
+
+        return NextResponse.json({
+            success: true,
+            message: 'Conteúdo manual apagado.',
+        });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Erro interno.';
+        console.error('[scan/source DELETE]', message);
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
+}

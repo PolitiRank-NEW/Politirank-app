@@ -14,9 +14,11 @@ import {
     Download,
     GitMerge,
     Loader2,
+    Pencil,
     PenLine,
     ScanSearch,
     Star,
+    Trash2,
     XCircle,
 } from "lucide-react";
 
@@ -85,6 +87,10 @@ export function WhatsAppSourceScannerDialog({
     const [showManual, setShowManual] = useState(false);
     const [manualCaption, setManualCaption] = useState("");
     const [manualSaving, setManualSaving] = useState(false);
+    const [editingPostId, setEditingPostId] = useState<string | null>(null);
+    const [editCaption, setEditCaption] = useState("");
+    const [editSaving, setEditSaving] = useState(false);
+    const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
     const fetchSource = useCallback(async () => {
         if (!candidateId) return;
@@ -170,6 +176,76 @@ export function WhatsAppSourceScannerDialog({
             setError(err instanceof Error ? err.message : "Erro ao cadastrar.");
         } finally {
             setManualSaving(false);
+        }
+    }
+
+    function startEdit(post: SourcePost) {
+        setEditingPostId(post.id);
+        setEditCaption(post.caption);
+        setError(null);
+        setActionMsg(null);
+    }
+
+    async function handleEditSave() {
+        if (!editingPostId) return;
+        const caption = editCaption.trim();
+        if (!caption) {
+            setError("Digite a legenda/conteúdo.");
+            return;
+        }
+        setEditSaving(true);
+        setError(null);
+        try {
+            const res = await fetch("/api/whatsapp/scan/source", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidateId, postId: editingPostId, caption }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Falha ao editar.");
+            setActionMsg(data.message || "Conteúdo atualizado.");
+            setEditingPostId(null);
+            setEditCaption("");
+            await fetchSource();
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Erro ao editar.");
+        } finally {
+            setEditSaving(false);
+        }
+    }
+
+    async function handleDelete(post: SourcePost) {
+        if (
+            !confirm(
+                `Apagar este conteúdo manual?\n\n"${post.caption.slice(0, 120)}${
+                    post.caption.length > 120 ? "…" : ""
+                }"`
+            )
+        ) {
+            return;
+        }
+        setDeletingPostId(post.id);
+        setError(null);
+        setActionMsg(null);
+        try {
+            const res = await fetch("/api/whatsapp/scan/source", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidateId, postId: post.id }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Falha ao apagar.");
+            setActionMsg(data.message || "Conteúdo apagado.");
+            if (editingPostId === post.id) {
+                setEditingPostId(null);
+                setEditCaption("");
+            }
+            if (expanded === post.id) setExpanded(null);
+            await fetchSource();
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Erro ao apagar.");
+        } finally {
+            setDeletingPostId(null);
         }
     }
 
@@ -344,38 +420,117 @@ export function WhatsAppSourceScannerDialog({
                                     className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50"
                                 >
                                     <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-medium text-slate-900 break-words">
-                                                “{post.caption}”
-                                                {post.isManual && (
-                                                    <span className="ml-2 inline-flex text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">
-                                                        Manual
-                                                    </span>
-                                                )}
-                                            </p>
-                                            <p className="text-[11px] text-slate-500 mt-0.5">
-                                                {new Date(post.postedAt).toLocaleString("pt-BR")}
-                                                {" · "}
-                                                <span className="text-emerald-700 font-semibold">
-                                                    {post.summary.groupsMatched} bateram
-                                                </span>
-                                                {" · "}
-                                                {pendingCount} pendentes / {post.summary.groupsTotal}{" "}
-                                                grupos
-                                            </p>
+                                        <div className="min-w-0 flex-1">
+                                            {editingPostId === post.id ? (
+                                                <div className="space-y-2">
+                                                    <textarea
+                                                        value={editCaption}
+                                                        onChange={(e) =>
+                                                            setEditCaption(e.target.value)
+                                                        }
+                                                        rows={3}
+                                                        className="w-full text-sm px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-900"
+                                                    />
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            onClick={handleEditSave}
+                                                            disabled={
+                                                                editSaving || !editCaption.trim()
+                                                            }
+                                                            className="bg-amber-500 hover:bg-amber-600 text-white"
+                                                        >
+                                                            {editSaving ? (
+                                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                            ) : (
+                                                                "Salvar"
+                                                            )}
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            disabled={editSaving}
+                                                            onClick={() => {
+                                                                setEditingPostId(null);
+                                                                setEditCaption("");
+                                                            }}
+                                                            className="border-slate-300 text-slate-700"
+                                                        >
+                                                            Cancelar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <p className="text-sm font-medium text-slate-900 break-words">
+                                                        “{post.caption}”
+                                                        {post.isManual && (
+                                                            <span className="ml-2 inline-flex text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">
+                                                                Manual
+                                                            </span>
+                                                        )}
+                                                    </p>
+                                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                                        {new Date(post.postedAt).toLocaleString(
+                                                            "pt-BR"
+                                                        )}
+                                                        {" · "}
+                                                        <span className="text-emerald-700 font-semibold">
+                                                            {post.summary.groupsMatched} bateram
+                                                        </span>
+                                                        {" · "}
+                                                        {pendingCount} pendentes /{" "}
+                                                        {post.summary.groupsTotal} grupos
+                                                    </p>
+                                                </>
+                                            )}
                                         </div>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="text-slate-700"
-                                            onClick={() =>
-                                                setExpanded((id) =>
-                                                    id === post.id ? null : post.id
-                                                )
-                                            }
-                                        >
-                                            {expanded === post.id ? "Ocultar" : "Ver grupos"}
-                                        </Button>
+                                        <div className="flex items-center gap-0.5 shrink-0">
+                                            {post.isManual && editingPostId !== post.id && (
+                                                <>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        title="Editar conteúdo manual"
+                                                        className="text-amber-700 hover:text-amber-900 hover:bg-amber-50 px-2"
+                                                        onClick={() => startEdit(post)}
+                                                        disabled={deletingPostId === post.id}
+                                                    >
+                                                        <Pencil className="w-4 h-4" />
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        title="Apagar conteúdo manual"
+                                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 px-2"
+                                                        onClick={() => handleDelete(post)}
+                                                        disabled={deletingPostId === post.id}
+                                                    >
+                                                        {deletingPostId === post.id ? (
+                                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                                        ) : (
+                                                            <Trash2 className="w-4 h-4" />
+                                                        )}
+                                                    </Button>
+                                                </>
+                                            )}
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-slate-700"
+                                                onClick={() =>
+                                                    setExpanded((id) =>
+                                                        id === post.id ? null : post.id
+                                                    )
+                                                }
+                                            >
+                                                {expanded === post.id ? "Ocultar" : "Ver grupos"}
+                                            </Button>
+                                        </div>
                                     </div>
 
                                     {expanded === post.id && (
