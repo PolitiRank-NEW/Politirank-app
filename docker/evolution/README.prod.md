@@ -136,10 +136,10 @@ cd /opt/politirank-evolution
 chmod +x cron-light-sync.sh
 crontab -e
 # adicione:
-# */30 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
+# */10 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
 ```
 
-Opcional (Pro): dá para voltar o cron nativo em `vercel.json` com `"schedule": "*/30 * * * *"`.
+Opcional (Pro): dá para voltar o cron nativo em `vercel.json` com `"schedule": "*/10 * * * *"`.
 
 ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sync leve → PoliticRank na Vercel.
-# Uso na Contabo (crontab): a cada 30 minutos
-#   */30 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
+# Uso na Contabo (crontab): a cada 10 minutos
+#   */10 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
 #
 # Requer arquivo /opt/politirank-evolution/cron.env com:
 #   CRON_SECRET=sua-chave-longa
