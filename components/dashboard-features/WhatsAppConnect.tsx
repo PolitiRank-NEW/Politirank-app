@@ -13,6 +13,24 @@ interface WhatsAppConnectProps {
 
 type ConnectionState = "not_configured" | "connecting" | "open" | "close" | "loading" | "error";
 
+type HealthReport = {
+    ok: boolean;
+    status: "ok" | "warning" | "critical" | "not_configured";
+    message: string;
+    issues: string[];
+    evolution?: { reachable: boolean; groups: number; seats: number };
+    app?: {
+        groups: number;
+        groupsEmptyMembers: number;
+        uniqueMembers: number;
+        duplicatePhones: number;
+        totalSeats: number;
+        missingInApp: number;
+    };
+    lastLiderancaUpdate?: string | null;
+    suggestFullSync?: boolean;
+};
+
 export function WhatsAppConnect({
     candidateProfileId,
     evolutionInstanceName,
@@ -27,6 +45,8 @@ export function WhatsAppConnect({
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<string | null>(null);
     const [syncProgress, setSyncProgress] = useState<string | null>(null);
+    const [health, setHealth] = useState<HealthReport | null>(null);
+    const [healthLoading, setHealthLoading] = useState(false);
     const autoSyncDone = useRef(false);
     const syncingLock = useRef(false);
     const wasConnecting = useRef(false);
@@ -34,6 +54,28 @@ export function WhatsAppConnect({
     const syncStorageKey = candidateProfileId
         ? `politirank-wa-fullsync-${candidateProfileId}`
         : null;
+
+    const fetchHealth = useCallback(async () => {
+        if (!candidateProfileId) return;
+        setHealthLoading(true);
+        try {
+            const res = await fetch(
+                `/api/whatsapp/evolution/health?candidateId=${candidateProfileId}`
+            );
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Falha ao checar saúde.");
+            setHealth(data as HealthReport);
+        } catch (err: unknown) {
+            setHealth({
+                ok: false,
+                status: "critical",
+                message: err instanceof Error ? err.message : "Erro ao checar dados.",
+                issues: [],
+            });
+        } finally {
+            setHealthLoading(false);
+        }
+    }, [candidateProfileId]);
 
     const fetchStatus = useCallback(async () => {
         if (!candidateProfileId) return;
@@ -210,6 +252,11 @@ export function WhatsAppConnect({
     }, [candidateProfileId, fetchStatus]);
 
     useEffect(() => {
+        if (state !== "open" || !candidateProfileId) return;
+        fetchHealth();
+    }, [state, candidateProfileId, fetchHealth]);
+
+    useEffect(() => {
         if (!candidateProfileId || state !== "connecting") return;
 
         let ticks = 0;
@@ -342,6 +389,57 @@ export function WhatsAppConnect({
                         WhatsApp vinculado. Todos os grupos do celular de scan entram
                         automaticamente.
                     </div>
+
+                    <div
+                        className={`rounded-xl px-3 py-2.5 border text-xs space-y-1.5 ${
+                            health?.status === "critical"
+                                ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300"
+                                : health?.status === "warning"
+                                  ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200"
+                                  : "bg-white/70 dark:bg-slate-900/50 border-green-100 dark:border-green-900/40 text-slate-700 dark:text-slate-300"
+                        }`}
+                    >
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold">
+                                {healthLoading
+                                    ? "Checando dados…"
+                                    : health?.message || "Saúde dos dados"}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => fetchHealth()}
+                                disabled={healthLoading}
+                                className="inline-flex items-center gap-1 font-semibold opacity-80 hover:opacity-100"
+                            >
+                                {healthLoading ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                    <RefreshCw className="w-3 h-3" />
+                                )}
+                                Verificar
+                            </button>
+                        </div>
+                        {health?.evolution && health?.app && (
+                            <p className="font-mono text-[11px] opacity-90">
+                                Celular: {health.evolution.groups} grupos / {health.evolution.seats}{" "}
+                                vagas · App: {health.app.groups} grupos / {health.app.totalSeats}{" "}
+                                vagas · Únicos: {health.app.uniqueMembers} · Vazios:{" "}
+                                {health.app.groupsEmptyMembers}
+                            </p>
+                        )}
+                        {health?.issues?.slice(0, 3).map((issue) => (
+                            <p key={issue} className="opacity-90">
+                                • {issue}
+                            </p>
+                        ))}
+                        {health?.lastLiderancaUpdate && (
+                            <p className="opacity-70">
+                                Último sync leve:{" "}
+                                {new Date(health.lastLiderancaUpdate).toLocaleString("pt-BR")}
+                            </p>
+                        )}
+                    </div>
+
                     {syncing && (
                         <div className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-900/40 rounded-xl px-3 py-2 border border-green-100 dark:border-green-900/40">
                             <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 mt-0.5" />
@@ -367,7 +465,11 @@ export function WhatsAppConnect({
                             runFullSync({ force: true });
                         }}
                         disabled={syncing}
-                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-green-500 hover:bg-green-600 text-white transition-all disabled:opacity-60 shadow-sm"
+                        className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-60 shadow-sm ${
+                            health?.suggestFullSync
+                                ? "bg-amber-500 hover:bg-amber-600 text-white"
+                                : "bg-green-500 hover:bg-green-600 text-white"
+                        }`}
                     >
                         {syncing ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -377,8 +479,9 @@ export function WhatsAppConnect({
                         {syncing ? "Sincronizando…" : "Atualizar todos os grupos"}
                     </button>
                     <p className="text-[11px] text-slate-400">
-                        Use só se algo falhar. No dia a dia, grupos novos e entradas/saídas
-                        atualizam sozinhos (webhook + timer horário leve).
+                        {health?.suggestFullSync
+                            ? "A checagem recomenda sync completo agora (divergência alta)."
+                            : "Use só se a checagem acima ficar vermelha/amarela. No dia a dia: webhook + timer 1h."}
                     </p>
                 </div>
             )}
