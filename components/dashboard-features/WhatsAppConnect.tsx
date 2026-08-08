@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle, Loader2, QrCode, RefreshCw, Smartphone, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, CheckCircle, Loader2, QrCode, RefreshCw, Smartphone, Upload, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import Papa from "papaparse";
 
 interface WhatsAppConnectProps {
     candidateProfileId?: string;
@@ -52,6 +53,8 @@ export function WhatsAppConnect({
     const [health, setHealth] = useState<HealthReport | null>(null);
     const [healthLoading, setHealthLoading] = useState(false);
     const [catchUpMsg, setCatchUpMsg] = useState<string | null>(null);
+    const [snapshotLoading, setSnapshotLoading] = useState(false);
+    const [snapshotMsg, setSnapshotMsg] = useState<string | null>(null);
     const autoSyncDone = useRef(false);
     const syncingLock = useRef(false);
     const wasConnecting = useRef(false);
@@ -117,6 +120,43 @@ export function WhatsAppConnect({
         },
         [candidateProfileId]
     );
+
+    async function handleSnapshotFile(file: File) {
+        if (!candidateProfileId) return;
+        setSnapshotLoading(true);
+        setSnapshotMsg(null);
+        setError(null);
+        try {
+            const text = await file.text();
+            const parsed = Papa.parse<Record<string, unknown>>(text, {
+                header: true,
+                skipEmptyLines: true,
+            });
+            if (parsed.errors.length > 0 && (!parsed.data || parsed.data.length === 0)) {
+                throw new Error(parsed.errors[0]?.message || "CSV inválido.");
+            }
+            const rows = (parsed.data || []).filter((r) =>
+                Object.values(r || {}).some((v) => String(v || "").trim())
+            );
+            if (rows.length === 0) throw new Error("CSV sem linhas de dados.");
+
+            const res = await fetch("/api/whatsapp/snapshot/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidateId: candidateProfileId, rows }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Falha no snapshot.");
+            setSnapshotMsg(data.message || "Snapshot aplicado.");
+            await fetchHealth();
+            // Atualiza totais do painel
+            setTimeout(() => window.location.reload(), 1200);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Erro ao importar snapshot.");
+        } finally {
+            setSnapshotLoading(false);
+        }
+    }
 
     const fetchStatus = useCallback(async () => {
         if (!candidateProfileId) return;
@@ -398,7 +438,7 @@ export function WhatsAppConnect({
                         Conexão Evolution API
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                        Evolution (Contabo) — webhook em tempo real; sync leve a cada 10 min; Verificar dispara catch-up se diferença &gt; 10
+                        Evolution (Contabo) — webhook leve (enquetes/entradas); sync de segurança a cada 6h; Verificar só compara
                     </p>
                 </div>
                 <span
@@ -448,7 +488,7 @@ export function WhatsAppConnect({
                             </span>
                             <button
                                 type="button"
-                                onClick={() => fetchHealth({ catchUp: true })}
+                                onClick={() => fetchHealth()}
                                 disabled={healthLoading}
                                 className="inline-flex items-center gap-1 font-semibold opacity-80 hover:opacity-100"
                             >
@@ -526,8 +566,63 @@ export function WhatsAppConnect({
                     <p className="text-[11px] text-slate-400">
                         {health?.suggestFullSync
                             ? "A checagem recomenda sync completo agora (divergência alta)."
-                            : "Use só se a checagem acima ficar vermelha. No dia a dia: webhook + Verificar (catch-up) + timer 10 min."}
+                            : "Use sync completo só em emergência. Dia a dia: webhook (enquetes) + CSV snapshot + timer 6h bem leve."}
                     </p>
+                    {health?.suggestLightSync && (
+                        <button
+                            type="button"
+                            onClick={() => fetchHealth({ catchUp: true })}
+                            disabled={healthLoading}
+                            className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 underline-offset-2 hover:underline"
+                        >
+                            Catch-up leve (só se preciso — evita uso diário)
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {candidateProfileId && (
+                <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 px-3 py-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                            Snapshot CSV (baixo radar)
+                        </p>
+                        <a
+                            href="/api/whatsapp/snapshot/import"
+                            className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                        >
+                            Baixar modelo
+                        </a>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                        Colunas: <span className="font-mono">grupo,telefone,nome</span>. Um arquivo
+                        atualiza membros, entradas/saídas, únicos e duplicados. Enquetes continuam
+                        via Evolution (webhook).
+                    </p>
+                    <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-slate-800 hover:bg-slate-900 text-white cursor-pointer disabled:opacity-60">
+                        {snapshotLoading ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                            <Upload className="w-4 h-4" />
+                        )}
+                        {snapshotLoading ? "Aplicando…" : "Importar snapshot CSV"}
+                        <input
+                            type="file"
+                            accept=".csv,text/csv"
+                            className="hidden"
+                            disabled={snapshotLoading}
+                            onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                e.target.value = "";
+                                if (f) void handleSnapshotFile(f);
+                            }}
+                        />
+                    </label>
+                    {snapshotMsg && (
+                        <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                            {snapshotMsg}
+                        </p>
+                    )}
                 </div>
             )}
 

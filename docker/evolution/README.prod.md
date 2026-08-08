@@ -135,11 +135,11 @@ cd /opt/politirank-evolution
 # cron-light-sync.sh + cron.env (CRON_SECRET igual à Vercel, APP_URL=https://politirank-app.vercel.app)
 chmod +x cron-light-sync.sh
 crontab -e
-# adicione:
-# */10 * * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
+# Remova o */10 e use (ritmo baixo p/ Meta):
+# 0 */6 * * * /opt/politirank-evolution/cron-light-sync.sh >> /var/log/politirank-light-sync.log 2>&1
 ```
 
-Opcional (Pro): dá para voltar o cron nativo em `vercel.json` com `"schedule": "*/10 * * * *"`.
+Opcional (Pro): dá para voltar o cron nativo em `vercel.json` com `"schedule": "0 */6 * * *"`.
 
 ---
 

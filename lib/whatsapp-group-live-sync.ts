@@ -8,8 +8,8 @@ import { evolutionService } from '@/services/evolutionService';
 
 export const AUTO_LIDERANCA_NAME = 'Grupos WhatsApp (Evolution)';
 
-/** Máx. de grupos com fetch de participantes por rodada do cron (protege Evolution). */
-export const CRON_MEMBER_RECONCILE_LIMIT = 50;
+/** Máx. de grupos com fetch de participantes por rodada do cron (protege Evolution / Meta). */
+export const CRON_MEMBER_RECONCILE_LIMIT = 15;
 
 /**
  * Uma vez: move entryCount antigo → entryCountSync (catch-up virava “entradas”).
