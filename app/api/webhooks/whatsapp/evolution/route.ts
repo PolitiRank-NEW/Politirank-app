@@ -19,6 +19,7 @@ import {
     upsertPollFromCreation,
     upsertPollVote,
 } from '@/lib/whatsapp-polls';
+import { parseReactionPayload, upsertReaction } from '@/lib/whatsapp-reactions';
 
 /**
  * Evolution API Webhook Handler
@@ -128,6 +129,68 @@ async function handleSingleMessage(instance: string, data: any) {
     const message = data?.message || {};
     const isPollCreation = !!(message.pollCreationMessage || message.pollCreationMessageV3);
     const isPollVote = !!message.pollUpdateMessage;
+    const isReaction = !!message.reactionMessage;
+
+    // --- Reação (emoji) ---
+    if (isReaction) {
+        const parsed = parseReactionPayload(data);
+        if (!parsed?.targetWaMessageId || !parsed.reactorLid) {
+            return { ignored: 'reaction incomplete', group: group.name };
+        }
+
+        let member = await prisma.whatsappGroupMember.findFirst({
+            where: {
+                groupId: group.id,
+                OR: [{ waLid: parsed.reactorLid }, { phone: parsed.reactorLid }],
+            } as never,
+        });
+        if (!member) {
+            member = await prisma.whatsappGroupMember.create({
+                data: {
+                    groupId: group.id,
+                    waLid: parsed.reactorLid,
+                    name: parsed.reactorName,
+                    isManual: false,
+                } as never,
+            });
+        }
+
+        await upsertReaction({
+            candidateId: profile.id,
+            groupDbId: group.id,
+            targetWaMessageId: parsed.targetWaMessageId,
+            emoji: parsed.emoji,
+            removed: parsed.removed,
+            reactorLid: parsed.reactorLid,
+            reactorPhone: member.phone,
+            reactorName: parsed.reactorName || member.name,
+            memberId: member.id,
+        });
+
+        if (!parsed.removed) {
+            await prisma.$transaction([
+                prisma.whatsappGroup.update({
+                    where: { id: group.id },
+                    data: { reactionsCount: { increment: 1 }, lastUpdate: new Date() } as never,
+                }),
+                prisma.whatsappLideranca.update({
+                    where: { id: group.liderancaId },
+                    data: { reactionsCount: { increment: 1 }, lastUpdate: new Date() } as never,
+                }),
+            ]);
+        }
+
+        console.log(
+            `[Evolution][REACTION] grupo="${group.name}" emoji="${parsed.emoji}" target=${parsed.targetWaMessageId} lid=${parsed.reactorLid}`
+        );
+        return {
+            success: true,
+            type: 'reaction',
+            group: group.name,
+            emoji: parsed.emoji,
+            removed: parsed.removed,
+        };
+    }
 
     // --- Criação de enquete ---
     if (isPollCreation) {
@@ -437,13 +500,39 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ ignored: true, reason: 'instance not linked' });
             }
             const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
-            const result = await handleGroupParticipantsUpdate(profile.id, {
-                id: typeof payload.id === 'string' ? payload.id : undefined,
-                participants: payload.participants,
-                participantsData: payload.participantsData,
-                action: typeof payload.action === 'string' ? payload.action : undefined,
-            });
+            const result = await handleGroupParticipantsUpdate(profile.id, payload);
             return NextResponse.json({ event: normalizedEvent, ...result });
+        }
+
+        // Reações (messages.reaction) — também chegam em messages.upsert com reactionMessage
+        if (
+            normalizedEvent === 'messages.reaction' ||
+            normalizedEvent.includes('messages.reaction')
+        ) {
+            if (!profile || !instanceName) {
+                return NextResponse.json({ ignored: true, reason: 'instance not linked' });
+            }
+            const items = Array.isArray(data) ? data : [data];
+            const results = [];
+            for (const item of items) {
+                if (!item) continue;
+                // Normaliza para o mesmo shape do upsert quando possível
+                const normalized =
+                    item?.message?.reactionMessage || item?.reactionMessage
+                        ? item
+                        : {
+                              key: item?.key || {
+                                  remoteJid: item?.remoteJid || item?.key?.remoteJid,
+                                  participant: item?.participant || item?.key?.participant,
+                              },
+                              pushName: item?.pushName,
+                              message: {
+                                  reactionMessage: item?.reaction || item?.reactionMessage || item,
+                              },
+                          };
+                results.push(await handleSingleMessage(instanceName, normalized));
+            }
+            return NextResponse.json({ event: normalizedEvent, processed: results.length, results });
         }
 
         if (normalizedEvent !== 'messages.upsert') {

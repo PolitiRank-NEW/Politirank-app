@@ -59,6 +59,7 @@ export class EvolutionService {
                     webhookByEvents: false,
                     events: [
                         'MESSAGES_UPSERT',
+                        'MESSAGES_REACTION',
                         'CONNECTION_UPDATE',
                         'GROUPS_UPSERT',
                         'GROUP_PARTICIPANTS_UPDATE',
@@ -84,6 +85,7 @@ export class EvolutionService {
                     webhookByEvents: false,
                     events: [
                         'MESSAGES_UPSERT',
+                        'MESSAGES_REACTION',
                         'CONNECTION_UPDATE',
                         'GROUPS_UPSERT',
                         'GROUP_PARTICIPANTS_UPDATE',

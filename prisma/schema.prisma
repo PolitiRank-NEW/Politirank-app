@@ -91,6 +91,7 @@ model CandidateProfile {
   whatsappScanTasks   WhatsappScanTask[]
   whatsappSourcePosts WhatsappSourcePost[]
   whatsappPolls       WhatsappPoll[]
+  whatsappReactions   WhatsappReaction[]
 }
 enum SocialPlatform {
   INSTAGRAM
@@ -332,6 +333,7 @@ model WhatsappGroup {
   sourcePosts      WhatsappSourcePost[]
   sourceMatches    WhatsappSourceMatch[]
   polls            WhatsappPoll[]
+  reactions        WhatsappReaction[]
   
   @@index([candidateId])
   @@index([liderancaId])
@@ -542,4 +544,34 @@ model WhatsappPollVote {
   @@unique([pollId, voterLid])
   @@index([pollId])
   @@index([memberId])
+}
+
+// ----------------------------------------------------------------------------
+// REAÇÕES (emoji) — JSON estruturado via webhook Evolution
+// ----------------------------------------------------------------------------
+
+model WhatsappReaction {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId         String   @db.ObjectId
+  candidate           CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  groupId             String   @db.ObjectId
+  group               WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  /// Mensagem que recebeu a reação
+  targetWaMessageId   String
+  /// Emoji; vazio = reação removida
+  emoji               String   @default("")
+  removed             Boolean  @default(false)
+
+  reactorLid          String?
+  reactorPhone        String?
+  reactorName         String?
+  memberId            String?
+
+  reactedAt           DateTime @default(now())
+
+  @@unique([groupId, targetWaMessageId, reactorLid])
+  @@index([candidateId, reactedAt])
+  @@index([groupId])
+  @@index([targetWaMessageId])
 }
