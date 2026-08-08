@@ -90,6 +90,7 @@ model CandidateProfile {
   whatsappGroups       WhatsappGroup[]
   whatsappScanTasks   WhatsappScanTask[]
   whatsappSourcePosts WhatsappSourcePost[]
+  whatsappPolls       WhatsappPoll[]
 }
 enum SocialPlatform {
   INSTAGRAM
@@ -330,6 +331,7 @@ model WhatsappGroup {
   scanHits         WhatsappScanHit[]
   sourcePosts      WhatsappSourcePost[]
   sourceMatches    WhatsappSourceMatch[]
+  polls            WhatsappPoll[]
   
   @@index([candidateId])
   @@index([liderancaId])
@@ -486,4 +488,58 @@ model WhatsappSourceMatch {
   @@index([groupId])
   @@index([sourcePostId])
   @@index([phone])
+}
+
+// ----------------------------------------------------------------------------
+// ENQUETES (JSON estruturado a partir do webhook Evolution)
+// ----------------------------------------------------------------------------
+
+model WhatsappPoll {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId     String   @db.ObjectId
+  candidate       CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  groupId         String   @db.ObjectId
+  group           WhatsappGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  /// ID da mensagem de criação no WhatsApp (key.id)
+  waMessageId     String
+  title           String
+  /// Opções da enquete (string[])
+  options         Json     @default("[]")
+
+  createdByLid    String?
+  createdByPhone  String?
+  createdByName   String?
+  createdAt       DateTime @default(now())
+  /// Trecho útil do payload (debug)
+  payload         Json?
+
+  votes           WhatsappPollVote[]
+
+  @@unique([groupId, waMessageId])
+  @@index([candidateId, createdAt])
+  @@index([groupId])
+}
+
+model WhatsappPollVote {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  pollId           String   @db.ObjectId
+  poll             WhatsappPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  memberId         String?
+  voterLid         String?
+  voterPhone       String?
+  voterName        String?
+
+  /// Opções escolhidas (string[])
+  selectedOptions  Json     @default("[]")
+  /// Label pronta pra UI (opções juntadas)
+  optionLabel      String   @default("")
+  votedAt          DateTime @default(now())
+  /// false = voto chegou criptografado / pendente de opção
+  decrypted        Boolean  @default(true)
+
+  @@unique([pollId, voterLid])
+  @@index([pollId])
+  @@index([memberId])
 }

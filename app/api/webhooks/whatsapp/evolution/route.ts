@@ -11,16 +11,21 @@ import {
     handleGroupParticipantsUpdate,
     handleGroupsUpsertOrUpdate,
 } from '@/lib/whatsapp-group-live-sync';
+import {
+    extractPollOptions,
+    extractPollTitle,
+    extractSelectedOptions,
+    mergeMemberPollDetail,
+    upsertPollFromCreation,
+    upsertPollVote,
+} from '@/lib/whatsapp-polls';
 
 /**
  * Evolution API Webhook Handler
  * Eventos: messages.upsert, groups.upsert/update, group.participants.update
  *
- * Observação sobre enquetes (polls):
- * - O voto chega em message.pollUpdateMessage e normalmente vem CRIPTOGRAFADO (encPayload/encIv).
- * - A Evolution tenta decriptar e, quando consegue, expõe as opções escolhidas em campos como
- *   pollUpdates / votes / selectedOptions. Como o formato varia por versão, fazemos parsing
- *   defensivo e logamos o payload cru para inspeção.
+ * Enquetes: gravadas em WhatsappPoll / WhatsappPollVote (JSON estruturado)
+ * + pollVotesDetail no membro (UI).
  *
  * Scanner Source:
  * - Grupo marcado isSource: posts com mídia+legenda viram referência.
@@ -36,52 +41,12 @@ interface WaKey {
 }
 
 // Cache em memória: pollId -> título da enquete (preenchido quando a enquete é criada).
-// Usado para rotular o voto, já que o pollUpdateMessage não traz o título.
 const pollTitleCache = new Map<string, string>();
-
-interface PollVoteEntry {
-    pollId: string | null;
-    pollTitle: string | null;
-    option: string;
-    votedAt: string;
-}
 
 function phoneFromJid(jid?: string): string | null {
     if (!jid) return null;
     const raw = jid.split('@')[0];
     return raw && /^\d+$/.test(raw) ? raw : raw || null;
-}
-
-/** Tenta extrair as opções votadas de formatos variados da Evolution/Baileys */
-function extractSelectedOptions(msg: any): string[] {
-    // Prioridade: opção já decriptada pela Evolution (campo mais confiável)
-    const decrypted =
-        msg?.message?.pollUpdateMessage?.vote?.selectedOptions ??
-        msg?.pollUpdateMessage?.vote?.selectedOptions;
-    if (Array.isArray(decrypted) && decrypted.length > 0) {
-        return decrypted
-            .map((o: unknown) => (typeof o === 'string' ? o : (o as { name?: string })?.name))
-            .filter(Boolean) as string[];
-    }
-
-    const fallbackPaths = [msg?.pollVotes, msg?.pollUpdates];
-    for (const p of fallbackPaths) {
-        if (Array.isArray(p) && p.length > 0) {
-            return p
-                .map((o: any) => (typeof o === 'string' ? o : o?.name || o?.optionName || o?.value))
-                .filter(Boolean);
-        }
-    }
-    return [];
-}
-
-function extractPollTitle(msg: any): string | null {
-    return (
-        msg?.message?.pollCreationMessage?.name ||
-        msg?.message?.pollCreationMessageV3?.name ||
-        msg?.pollCreationMessage?.name ||
-        null
-    );
 }
 
 async function handleSingleMessage(instance: string, data: any) {
@@ -166,12 +131,32 @@ async function handleSingleMessage(instance: string, data: any) {
 
     // --- Criação de enquete ---
     if (isPollCreation) {
-        const title = extractPollTitle(data);
-        // A chave da mensagem de criação é referenciada pelos votos (pollCreationMessageKey.id)
+        const title = extractPollTitle(data) || '(enquete)';
+        const options = extractPollOptions(data);
+        const creatorLid = phoneFromJid(key.participant || undefined);
         if (key.id && title) {
             pollTitleCache.set(key.id, title);
         }
-        console.log(`[Evolution][POLL CREATED] grupo="${group.name}" título="${title}" pollId=${key.id}`);
+        console.log(
+            `[Evolution][POLL CREATED] grupo="${group.name}" título="${title}" pollId=${key.id} opções=${JSON.stringify(options)}`
+        );
+
+        if (key.id) {
+            await upsertPollFromCreation({
+                candidateId: profile.id,
+                groupDbId: group.id,
+                waMessageId: key.id,
+                title,
+                options,
+                createdByLid: creatorLid,
+                createdByName: pushName,
+                payload: {
+                    options,
+                    fromMe: key.fromMe || false,
+                },
+            });
+        }
+
         await prisma.$transaction([
             (prisma.whatsappGroup as any).update({
                 where: { id: group.id },
@@ -182,19 +167,14 @@ async function handleSingleMessage(instance: string, data: any) {
                 data: { pollsCount: { increment: 1 }, lastUpdate: new Date() },
             }),
         ]);
-        return { success: true, type: 'poll_created', group: group.name, title };
+        return { success: true, type: 'poll_created', group: group.name, title, options };
     }
 
     // --- Voto em enquete ---
     if (isPollVote) {
-        // No voto, o WhatsApp identifica o votante pelo LID (ex.: 77412524134598@lid),
-        // não pelo telefone. Por isso cruzamos primeiro pelo waLid salvo no sync.
         const voterJid = key.participant || key.remoteJid;
         const voterLid = phoneFromJid(voterJid);
         const options = extractSelectedOptions(data);
-
-        // pollId identifica a enquete: usamos para deduplicar (o WhatsApp reenvia o mesmo voto
-        // várias vezes, e mudanças de voto também chegam como novos eventos).
         const pollId: string | null = message.pollUpdateMessage?.pollCreationMessageKey?.id ?? null;
         const pollTitle = pollId ? pollTitleCache.get(pollId) ?? null : null;
 
@@ -227,39 +207,31 @@ async function handleSingleMessage(instance: string, data: any) {
                 });
             }
 
-            const prevDetail: PollVoteEntry[] = Array.isArray(member.pollVotesDetail)
-                ? (member.pollVotesDetail as unknown as PollVoteEntry[])
-                : [];
+            const { poll } = await upsertPollVote({
+                candidateId: profile.id,
+                groupDbId: group.id,
+                waMessageId: pollId,
+                pollTitle,
+                voterLid,
+                voterPhone: member.phone,
+                voterName: data?.pushName || member.name,
+                memberId: member.id,
+                selectedOptions: options,
+            });
 
-            // Procura voto existente para a MESMA enquete (idempotência)
-            const idx = prevDetail.findIndex((e) => e.pollId && pollId && e.pollId === pollId);
-            const hasValidOptions = options.length > 0;
-
-            const nextDetail = [...prevDetail];
-            if (idx >= 0) {
-                // Já votou nesta enquete: atualiza a opção só se agora temos opção decriptada.
-                // Assim, reenvios do mesmo voto NÃO duplicam e mudanças de voto são refletidas.
-                if (hasValidOptions) {
-                    nextDetail[idx] = {
-                        ...nextDetail[idx],
-                        option: options.join(', '),
-                        pollTitle: pollTitle ?? nextDetail[idx].pollTitle,
-                        votedAt: new Date().toISOString(),
-                    };
-                }
-            } else {
-                nextDetail.push({
-                    pollId,
-                    pollTitle,
-                    option: hasValidOptions ? options.join(', ') : '(voto pendente)',
-                    votedAt: new Date().toISOString(),
-                });
-            }
+            const resolvedTitle = pollTitle || poll?.title || null;
+            const nextDetail = mergeMemberPollDetail(member.pollVotesDetail, {
+                pollId,
+                pollTitle: resolvedTitle,
+                option: options.length > 0 ? options.join(', ') : '(voto pendente)',
+                options,
+                votedAt: new Date().toISOString(),
+                decrypted: options.length > 0,
+            });
 
             await prisma.whatsappGroupMember.update({
                 where: { id: member.id },
                 data: {
-                    // pollVotes = nº de enquetes distintas votadas (não infla com reenvios)
                     pollVotes: nextDetail.length,
                     pollVotesDetail: nextDetail as any,
                     ...(data?.pushName && !member.name ? { name: data.pushName } : {}),

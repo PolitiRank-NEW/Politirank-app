@@ -2,7 +2,9 @@ export type PollVoteEntry = {
     pollId?: string | null;
     pollTitle?: string | null;
     option: string;
+    options?: string[];
     votedAt?: string;
+    decrypted?: boolean;
 };
 
 export type MemberExportRecord = {
